@@ -1,0 +1,10 @@
+body {
+  margin: 0;
+  overflow: hidden;
+  background-color: #050505; /* 홀로그램이 잘 보이도록 어두운 배경 */
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+}
