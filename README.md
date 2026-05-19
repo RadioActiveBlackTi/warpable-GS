@@ -1,6 +1,9 @@
 # Holo Card Prototype
+<div align=center>
+  <img src="./image.png" width="400" />
+</div>
 
-A Three.js + Vite prototype that renders a holographic card surface using a Gaussian splat render target.
+A Three.js + Vite prototype that renders a warpable scene that may contain both mesh and Gaussian Splats.
 
 ## Requirements
 
