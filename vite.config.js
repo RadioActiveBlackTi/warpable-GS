@@ -15,5 +15,13 @@ const crossOriginIsolationPlugin = () => ({
 });
 
 export default defineConfig({
-  plugins: [crossOriginIsolationPlugin()]
+  plugins: [crossOriginIsolationPlugin()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: './index.html',
+        skinning: './skinning_demo.html'
+      }
+    }
+  }
 });

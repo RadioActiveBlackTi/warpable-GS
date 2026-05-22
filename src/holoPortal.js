@@ -1,17 +1,7 @@
 import * as THREE from 'three';
-
-// Ripple function shared by CPU and GPU.
-function getRippleZ(x, y, time, bendAmount, radius) {
-    const amplitude = Math.min(Math.max(Math.abs(bendAmount), 0.0), 20.0);
-    const r = Math.sqrt(x * x + y * y) / radius;
-
-    if (r > 1.0) return 0.0;
-
-    const rippleSpeed = 4.0;
-    const rippleFreq = 22.0;
-    const envelope = Math.exp(-r * 2.0);
-    return Math.sin(r * rippleFreq - time * rippleSpeed) * envelope * amplitude;
-}
+import { getRippleZ } from './mathUtils.js';
+import { setupLidShaderInjection, getGaussianSplatLBSInjection } from './shaders.js';
+import { RBF_WEIGHTS, RIPPLE, PORTAL, LIGHTS } from './constants.js';
 
 export class HoloPortal {
     constructor(mainScene, mainCamera, renderer, plyPath, options = {}) {
@@ -20,11 +10,11 @@ export class HoloPortal {
         this.renderer = renderer;
         this.plyPath = plyPath;
 
-        this.cylinderRadius = options.cylinderRadius ?? 50.0;
-        this.cylinderHeight = options.cylinderHeight ?? 100.0;
-        this.splatScale = options.splatScale ?? 15.0;
+        this.cylinderRadius = options.cylinderRadius ?? PORTAL.CYLINDER_RADIUS;
+        this.cylinderHeight = options.cylinderHeight ?? PORTAL.CYLINDER_HEIGHT;
+        this.splatScale = options.splatScale ?? PORTAL.SPLAT_SCALE;
 
-        // RTT setup.
+        // ====== RTT(Render-To-Texture) 세팅 ======
         this.splatScene = new THREE.Scene();
         this.renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
             format: THREE.RGBAFormat,
@@ -34,16 +24,14 @@ export class HoloPortal {
         });
         this.splatCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
 
-        // Lid shader setup.
-        const lidGeometry = new THREE.RingGeometry(0, this.cylinderRadius, 128, 64);
+        // ====== Lid 메쉬 쉐이더 세팅 ======
+        const lidGeometry = new THREE.RingGeometry(0, this.cylinderRadius, PORTAL.RING_SEGMENTS, PORTAL.RING_RADIAL_SEGMENTS);
+        const lidShaderConfig = setupLidShaderInjection();
 
         this.lidUniforms = {
             map: { value: this.renderTarget.texture },
-            uTime: { value: 0.0 },
-            uBendAmount: { value: 2.0 },
-            uDistanceFade: { value: 1.0 },
+            ...lidShaderConfig.uniforms,
             uRadius: { value: this.cylinderRadius },
-            uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
         };
 
         const lidMaterial = new THREE.MeshStandardMaterial({
@@ -56,6 +44,7 @@ export class HoloPortal {
         });
 
         lidMaterial.onBeforeCompile = (shader) => {
+            // 유니폼 할당
             shader.uniforms.map = this.lidUniforms.map;
             shader.uniforms.uTime = this.lidUniforms.uTime;
             shader.uniforms.uBendAmount = this.lidUniforms.uBendAmount;
@@ -63,86 +52,30 @@ export class HoloPortal {
             shader.uniforms.uDistanceFade = this.lidUniforms.uDistanceFade;
             shader.uniforms.uResolution = this.lidUniforms.uResolution;
 
-            shader.vertexShader = `
-                uniform float uTime;
-                uniform float uBendAmount;
-                uniform float uRadius;
+            // 버텍스 쉐이더 주입
+            shader.vertexShader = lidShaderConfig.injectVertex + shader.vertexShader;
 
-                // Local slope passed to the fragment shader.
-                varying vec2 vLocalSlope;
-
-                float rippleFunc(vec2 p, float t, float b, float radius) {
-                    float amplitude = clamp(abs(b), 0.0, 20.0);
-                    float r = length(p) / radius;
-                    if (r > 1.0) return 0.0;
-                    float rippleSpeed = 4.0;
-                    float rippleFreq = 22.0;
-                    float envelope = exp(-r * 2.0);
-                    return sin(r * rippleFreq - t * rippleSpeed) * envelope * amplitude;
-                }
-            ` + shader.vertexShader;
-
-            // Inject the ripple deformation into Three.js normal generation.
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <beginnormal_vertex>',
-                `
-                float eps = 0.01;
-                vec3 p0 = position;
-                p0.z += rippleFunc(p0.xy, uTime, uBendAmount, uRadius);
-
-                vec3 px = position + vec3(eps, 0.0, 0.0);
-                px.z += rippleFunc(px.xy, uTime, uBendAmount, uRadius);
-
-                vec3 py = position + vec3(0.0, eps, 0.0);
-                py.z += rippleFunc(py.xy, uTime, uBendAmount, uRadius);
-
-                vec3 T = normalize(px - p0);
-                vec3 B = normalize(py - p0);
-                vec3 localN = normalize(cross(T, B));
-
-                vec3 objectNormal = localN;
-                vLocalSlope = localN.xy;
-                `
+                lidShaderConfig.replaceNormalVertex
             );
 
-            // Apply the ripple displacement to the vertex position.
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <begin_vertex>',
-                `
-                vec3 transformed = vec3(position);
-                transformed.z += rippleFunc(position.xy, uTime, uBendAmount, uRadius);
-                `
+                lidShaderConfig.replaceBeginVertex
             );
 
-            // Fragment shader setup.
-            shader.fragmentShader = `
-                uniform sampler2D map;
-                uniform float uDistanceFade;
-                uniform vec2 uResolution;
-                varying vec2 vLocalSlope;
-            ` + shader.fragmentShader;
+            // 프래그먼트 쉐이더 주입
+            shader.fragmentShader = lidShaderConfig.injectFragment + shader.fragmentShader;
 
-            // Use screen-space UVs with a simple warp.
             shader.fragmentShader = shader.fragmentShader.replace(
                 '#include <map_fragment>',
-                `
-                vec2 screenUv = gl_FragCoord.xy / uResolution.xy;
-                float warpStrength = 0.06;
-                vec2 uvOffset = vLocalSlope * warpStrength * uDistanceFade;
-                vec2 warpedUv = clamp(screenUv + uvOffset, 0.0, 1.0);
-                vec4 sampledDiffuseColor = texture2D(map, warpedUv);
-
-                // Keep empty areas translucent so the water layer still reads as a surface.
-                diffuseColor *= sampledDiffuseColor;
-                diffuseColor.a = mix(0.28, 0.78, sampledDiffuseColor.a);
-                `
+                lidShaderConfig.replaceMapFragment
             );
 
             shader.fragmentShader = shader.fragmentShader.replace(
                 '#include <output_fragment>',
-                `
-                gl_FragColor = vec4(outgoingLight, diffuseColor.a);
-                `
+                lidShaderConfig.replaceOutputFragment
             );
         };
 
@@ -151,13 +84,13 @@ export class HoloPortal {
         this.lidMesh.rotation.x = -Math.PI / 2;
         mainScene.add(this.lidMesh);
 
-        // Cylinder body.
+        // ====== 실린더 바디 ======
         const cylinderGeometry = new THREE.CylinderGeometry(
             this.cylinderRadius,
             this.cylinderRadius,
             this.cylinderHeight,
             64,
-            1,
+            PORTAL.CYLINDER_HEIGHT_SEGMENTS,
             true
         );
         this.surfaceMesh = new THREE.Mesh(
@@ -166,7 +99,7 @@ export class HoloPortal {
         );
         mainScene.add(this.surfaceMesh);
 
-        // Internal test object.
+        // ====== 내부 테스트 객체 ======
         this.testCube = new THREE.Mesh(
             new THREE.BoxGeometry(15, 15, 15),
             new THREE.MeshStandardMaterial({ color: 0xff4444 })
@@ -174,19 +107,26 @@ export class HoloPortal {
         this.testCube.position.set(0, this.cylinderHeight / 2 - 35, 0);
         this.splatScene.add(this.testCube);
 
-        // Lighting for the RTT scene.
-        this.splatScene.add(new THREE.AmbientLight(0xffffff, 1.2));
-        const dirLight = new THREE.DirectionalLight(0xffffff, 2.5);
-        dirLight.position.set(50, 100, 50);
+        // ====== RTT 씬 조명 ======
+        this.splatScene.add(new THREE.AmbientLight(LIGHTS.RTT_AMBIENT_INTENSITY));
+        const dirLight = new THREE.DirectionalLight(0xffffff, LIGHTS.RTT_DIRECTIONAL_INTENSITY);
+        dirLight.position.set(...LIGHTS.LIGHT1_POS);
         this.splatScene.add(dirLight);
 
         this.viewer = null;
         this.isUnderwater = false;
         this.wasUnderwater = false;
+
+        // ARAP 데이터 저장소
+        this.restPositions = null;
+        this.boneTexture = null;
+        this.boneTextureWidth = 0;
+        this.boneTextureHeight = 0;
     }
 
-    // 💡 1. 데이터를 받아오는 세터(Setter) 추가
-    // 💡 1. main.js에서 보낸 데이터를 받는 함수
+    /**
+     * main.js에서 ARAP 데이터 수신
+     */
     setARAPData(restPositions, boneTexture, boneTextureWidth, boneTextureHeight) {
         this.restPositions = restPositions;
         this.boneTexture = boneTexture;
@@ -194,71 +134,74 @@ export class HoloPortal {
         this.boneTextureHeight = boneTextureHeight;
     }
 
-    // 💡 2. 기존 loadSplat 함수 마지막에 주입 함수 호출 추가
+    /**
+     * 스플랫 로드 및 스킨닝 주입
+     */
     async loadSplat(dropInViewer) {
         this.viewer = dropInViewer;
         this.splatScene.add(this.viewer);
 
         await this.viewer.addSplatScene(this.plyPath, {
             progressiveLoad: true,
-            position: [0, this.cylinderHeight / 2 - 15, 0],
+            position: [0, this.cylinderHeight / 2, 0],
             scale: [this.splatScale, this.splatScale, this.splatScale],
         });
 
-        // 스플랫 로드 직후 가중치 계산 및 쉐이더 해킹 실행
+        // 스플랫 로드 후 스킨닝 주입
         this.injectSkinning();
     }
 
-    // 💡 3. 가우시안 런타임 가중치 베이킹 및 쉐이더 몽키 패치
+    /**
+     * 가우시안 스플랫에 LBS(Linear Blend Skinning) 주입
+     * 런타임에 스플랫 센터를 뼈 애니메이션에 따라 변형
+     */
     injectSkinning() {
         const splatMesh = this.viewer.splatMesh;
-        if (!splatMesh || !this.restPositions) return;
+        if (!splatMesh || !this.restPositions) {
+            console.warn('Cannot inject skinning: missing splatMesh or restPositions');
+            return;
+        }
 
-        console.log("⏳ 가우시안 런타임 가중치 베이킹 시작...");
-        
+        console.log('💡 가우시안 스플랫 스킨닝 주입 시작...');
+
         const splatCount = splatMesh.getSplatCount();
         const mat = splatMesh.material;
-        
         const texWidth = mat.uniforms.centersColorsTextureSize.value.x;
         const texHeight = mat.uniforms.centersColorsTextureSize.value.y;
 
+        // ====== 스플랫별 스킨 인덱스/가중치 텍스처 생성 ======
         const skinIndices = new Float32Array(texWidth * texHeight * 4);
         const skinWeights = new Float32Array(texWidth * texHeight * 4);
 
-        const sigma = 5.0; // 유연함 파라미터
+        const sigma = RBF_WEIGHTS.SPLAT_SIGMA;
         const center = new THREE.Vector3();
 
-        // 라이브러리 버전 파편화를 막기 위한 안전한 중심점 추출 헬퍼
+        // 안전한 센터 추출 헬퍼
         let getSafeCenter;
         if (typeof splatMesh.getSplatCenter === 'function') {
             getSafeCenter = (i, out) => splatMesh.getSplatCenter(i, out);
         } else {
-            // 구버전/내부 구조 변경 대응 폴백
             const buffer = splatMesh.scenes ? splatMesh.scenes[0].splatBuffer : splatMesh.splatBuffers[0];
             const centers = buffer.centers || buffer.getCenters();
-            getSafeCenter = (i, out) => out.set(centers[i*3], centers[i*3+1], centers[i*3+2]);
+            getSafeCenter = (i, out) => out.set(centers[i * 3], centers[i * 3 + 1], centers[i * 3 + 2]);
         }
 
-        // 스플랫의 Scale과 Position이 적용된 월드 행렬을 미리 업데이트합니다.
         splatMesh.updateMatrixWorld(true);
 
-        // 30만개의 스플랫에 대해 24-Bone 가중치 계산
+        // 각 스플랫에 대해 상위 4개 뼈의 가중치 계산
         for (let i = 0; i < splatCount; i++) {
-            // 1. 안전하게 원본 중심점을 가져옵니다.
             getSafeCenter(i, center);
-            
-            // 2. 💡 매우 중요: Scale 15배, Position 이동이 적용된 '진짜 화면상 위치(World)'로 변환
             center.applyMatrix4(splatMesh.matrixWorld);
 
             let typedWeights = [];
-            for (let b = 0; b < 24; b++) { // 현재 뼈대 24개
+            for (let b = 0; b < this.restPositions.length; b++) {
                 const dist = center.distanceTo(this.restPositions[b]);
                 const w = Math.exp(-(dist * dist) / (2 * sigma * sigma));
                 typedWeights.push({ index: b, weight: w });
             }
 
             typedWeights.sort((a, b) => b.weight - a.weight);
-            const sum = typedWeights[0].weight + typedWeights[1].weight + 
+            const sum = typedWeights[0].weight + typedWeights[1].weight +
                         typedWeights[2].weight + typedWeights[3].weight + 1e-5;
 
             skinIndices[i * 4 + 0] = typedWeights[0].index;
@@ -277,75 +220,41 @@ export class HoloPortal {
         const skinWeightsTexture = new THREE.DataTexture(skinWeights, texWidth, texHeight, THREE.RGBAFormat, THREE.FloatType);
         skinWeightsTexture.needsUpdate = true;
 
+        // ====== 쉐이더에 유니폼 추가 ======
         mat.uniforms.boneTexture = { value: this.boneTexture };
         mat.uniforms.boneTextureWidth = { value: this.boneTextureWidth };
         mat.uniforms.boneTextureHeight = { value: this.boneTextureHeight };
         mat.uniforms.skinIndicesTexture = { value: skinIndicesTexture };
         mat.uniforms.skinWeightsTexture = { value: skinWeightsTexture };
 
-        // ... (앞부분 skinWeightsTexture.needsUpdate = true; 까지는 그대로 유지) ...
-
+        // ====== 버텍스 쉐이더 수정 ======
+        const lbsInjection = getGaussianSplatLBSInjection();
         let modifiedShader = mat.vertexShader;
-        
+
         modifiedShader = modifiedShader.replace(
             /void\s+main\s*\([^)]*\)\s*\{/,
-            `
-            uniform sampler2D boneTexture;
-            uniform float boneTextureWidth;
-            uniform float boneTextureHeight;
-            uniform sampler2D skinIndicesTexture;
-            uniform sampler2D skinWeightsTexture;
-
-            // 💡 UV 좌표 계산(getDataUV, texture)을 모두 버리고, 정수형 픽셀 인덱스(texelFetch)로 직행
-            mat4 getBoneMatrix(float boneIdx) {
-                int bIdx = int(boneIdx);
-                int texW = int(boneTextureWidth);
-                int pixelStart = bIdx * 4;
-                
-                vec4 col0 = texelFetch(boneTexture, ivec2((pixelStart + 0) % texW, (pixelStart + 0) / texW), 0);
-                vec4 col1 = texelFetch(boneTexture, ivec2((pixelStart + 1) % texW, (pixelStart + 1) / texW), 0);
-                vec4 col2 = texelFetch(boneTexture, ivec2((pixelStart + 2) % texW, (pixelStart + 2) / texW), 0);
-                vec4 col3 = texelFetch(boneTexture, ivec2((pixelStart + 3) % texW, (pixelStart + 3) / texW), 0);
-                
-                return mat4(col0, col1, col2, col3);
-            }
-            
-            void main() {
-            `
+            lbsInjection.mainFunctionPrefix
         );
 
         modifiedShader = modifiedShader.replace(
             'vec3 splatCenter = uintBitsToFloat(uvec3(sampledCenterColor.gba));',
-            `
-            vec3 splatCenter = uintBitsToFloat(uvec3(sampledCenterColor.gba));
-            
-            // 💡 라이브러리 내장 함수(getDataUV) 완전 폐기!
-            // 스플랫 인덱스를 정수로 변환하여 텍스처에서 직접 가중치/인덱스 픽셀을 뽑아옵니다.
-            int texW = int(centersColorsTextureSize.x);
-            int sIdx = int(splatIndex);
-            ivec2 texelCoord = ivec2(sIdx % texW, sIdx / texW);
-            
-            vec4 skinIdx = texelFetch(skinIndicesTexture, texelCoord, 0);
-            vec4 skinW = texelFetch(skinWeightsTexture, texelCoord, 0);
-            
-            // LBS 계산
-            mat4 skinMat = getBoneMatrix(skinIdx.x) * skinW.x +
-                           getBoneMatrix(skinIdx.y) * skinW.y +
-                           getBoneMatrix(skinIdx.z) * skinW.z +
-                           getBoneMatrix(skinIdx.w) * skinW.w;
-                           
-            splatCenter = (skinMat * vec4(splatCenter, 1.0)).xyz;
-            `
+            `vec3 splatCenter = uintBitsToFloat(uvec3(sampledCenterColor.gba));
+            ${lbsInjection.splatCenterModification}`
         );
 
         mat.vertexShader = modifiedShader;
         mat.needsUpdate = true;
-        console.log("✅ 가우시안 쉐이더 texelFetch 해킹 및 모핑 적용 완료!");
+
+        console.log('✅ 가우시안 스플랫 LBS 주입 완료!');
     }
 
+    /**
+     * 매 프레임 업데이트
+     */
     update(deltaTime) {
         this.lidUniforms.uTime.value += deltaTime;
 
+        // 카메라 위치 기반 수중/수상 판정
         const localCamPos = this.lidMesh.worldToLocal(this.mainCamera.position.clone());
         const horizontalDist = Math.sqrt(localCamPos.x * localCamPos.x + localCamPos.y * localCamPos.y);
 
@@ -362,7 +271,7 @@ export class HoloPortal {
 
         this.isUnderwater = isInCylinderRadius && distToSurface < 0.0;
 
-        // Fade the refraction effect as the camera approaches the surface.
+        // 굴절 효과 페이드
         let fadeRatio = 1.0;
         if (isInCylinderRadius && distToSurface > 0.0) {
             const fadeDist = this.cylinderRadius * 0.4;
@@ -372,7 +281,7 @@ export class HoloPortal {
 
         this.lidMesh.visible = !this.isUnderwater;
 
-        // Swap the test cube and the splat viewer between scenes when the camera crosses the surface.
+        // 카메라가 표면을 넘나들 때 개체 씬 변경
         if (this.isUnderwater !== this.wasUnderwater) {
             this.wasUnderwater = this.isUnderwater;
 
@@ -386,9 +295,12 @@ export class HoloPortal {
         }
     }
 
+    /**
+     * 렌더링
+     */
     render() {
         if (!this.isUnderwater) {
-            // Above water: bake the RTT and draw the main scene.
+            // 수상: RTT 렌더 후 메인 씬 렌더
             this.splatCamera.copy(this.mainCamera);
 
             const prevRT = this.renderer.getRenderTarget();
@@ -401,17 +313,18 @@ export class HoloPortal {
             this.renderer.setRenderTarget(prevRT);
             this.renderer.render(this.mainScene, this.mainCamera);
         } else {
-            // Underwater: draw the main scene directly.
+            // 수중: 메인 씬만 렌더
             this.renderer.render(this.mainScene, this.mainCamera);
         }
     }
 
+    // ====== 제어 메서드 ======
     setBendAmount(val) {
         this.lidUniforms.uBendAmount.value = Math.min(Math.max(val, 0.0), 20.0);
     }
 
     setSplatScale(val) {
-        this.splatScale = val * 15.0;
+        this.splatScale = val * PORTAL.SPLAT_SCALE;
         if (this.viewer) {
             this.viewer.scale.setScalar(this.splatScale);
         }
@@ -421,9 +334,9 @@ export class HoloPortal {
         this.cylinderRadius = val;
         this.lidUniforms.uRadius.value = val;
         this.lidMesh.geometry.dispose();
-        this.lidMesh.geometry = new THREE.RingGeometry(0, val, 128, 64);
+        this.lidMesh.geometry = new THREE.RingGeometry(0, val, PORTAL.RING_SEGMENTS, PORTAL.RING_RADIAL_SEGMENTS);
         this.surfaceMesh.geometry.dispose();
-        this.surfaceMesh.geometry = new THREE.CylinderGeometry(val, val, this.cylinderHeight, 64, 1, true);
+        this.surfaceMesh.geometry = new THREE.CylinderGeometry(val, val, this.cylinderHeight, 64, PORTAL.CYLINDER_HEIGHT_SEGMENTS, true);
     }
 
     handleResize() {
