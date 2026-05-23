@@ -21,6 +21,7 @@ const state = {
     boneMeshes: [],
     selectedBoneIndices: [],
     activeBoneIndex: -1,
+    fixedBoneIndices: new Set(),
     arap: null,
     raycaster: new THREE.Raycaster(),
     pointer: new THREE.Vector2(),
@@ -109,6 +110,7 @@ function setupPickingEvents() {
     dom.addEventListener('pointerup', onPointerUp);
     dom.addEventListener('pointerleave', onPointerUp);
     dom.addEventListener('dblclick', onDoubleClick);
+    dom.addEventListener('contextmenu', onContextMenu);
 }
 
 async function loadData() {
@@ -405,23 +407,9 @@ window.resetRig = function() {
     // Clear bone selection state
     state.selectedBoneIndices = [];
     state.activeBoneIndex = -1;
+    state.fixedBoneIndices.clear();
     if (document.getElementById('selectedBone')) document.getElementById('selectedBone').value = '0';
     if (document.getElementById('selectedBoneValue')) document.getElementById('selectedBoneValue').textContent = 'none';
-
-    // Reset rotation sliders
-    ['rotX', 'rotY', 'rotZ'].forEach((id) => {
-        const el = document.getElementById(id);
-        const valueEl = document.getElementById(`${id}Value`);
-        if (el) el.value = '0';
-        if (valueEl) valueEl.textContent = '0°';
-    });
-
-    // Reset global rigid body transformation
-    if (state.contentGroup) {
-        state.contentGroup.position.set(0, 0, 0);
-        state.contentGroup.quaternion.identity();
-        // Scale is preserved from Gaussian splat scale slider
-    }
 
     // Synchronize deformation system state to visual representations
     syncArapToMeshes();
@@ -458,13 +446,25 @@ function syncSelectionToUI() {
     state.boneMeshes.forEach((mesh, i) => {
         const selected = selectedSet.has(i);
         const active = i === state.activeBoneIndex;
+        const fixed = state.fixedBoneIndices.has(i);
         const material = mesh.material;
         if (material) {
-            material.color.set(selected ? (active ? 0xffaa44 : 0xff4444) : 0x4488ff);
-            material.emissive.set(selected ? (active ? 0x885500 : 0x661111) : 0x2244ff);
-            material.emissiveIntensity = selected ? (active ? 1.0 : 0.9) : 0.5;
+            // Fixed/static bones are green, moving bones are red/orange, normal is blue
+            if (fixed) {
+                material.color.set(0x00dd66);
+                material.emissive.set(0x009944);
+                material.emissiveIntensity = 0.8;
+            } else if (selected) {
+                material.color.set(active ? 0xff5544 : 0xff3333);
+                material.emissive.set(active ? 0x884433 : 0x661111);
+                material.emissiveIntensity = active ? 1.0 : 0.9;
+            } else {
+                material.color.set(0x4488ff);
+                material.emissive.set(0x2244ff);
+                material.emissiveIntensity = 0.5;
+            }
         }
-        mesh.scale.setScalar(active ? 1.8 : selected ? 1.5 : 1.0);
+        mesh.scale.setScalar(fixed ? 2.0 : active ? 1.8 : selected ? 1.5 : 1.0);
     });
 
     if (document.getElementById('selectedBoneValue')) {
@@ -475,7 +475,10 @@ function syncSelectionToUI() {
 
 function setBoneSelection(indices, activeIndex = indices?.[0] ?? -1, updateSlider = true) {
     const maxIdx = Math.max(0, state.boneMeshes.length - 1);
-    const filtered = [...new Set((indices || []).filter((i) => Number.isFinite(i)).map((i) => THREE.MathUtils.clamp(i, 0, maxIdx)))];
+    // Filter out fixed bones - they cannot be selected
+    const filtered = [...new Set((indices || [])
+        .filter((i) => Number.isFinite(i) && !state.fixedBoneIndices.has(i))
+        .map((i) => THREE.MathUtils.clamp(i, 0, maxIdx)))];
     state.selectedBoneIndices = filtered;
     state.activeBoneIndex = filtered.includes(activeIndex) ? activeIndex : (filtered[0] ?? -1);
 
@@ -487,10 +490,23 @@ function setBoneSelection(indices, activeIndex = indices?.[0] ?? -1, updateSlide
 }
 
 function toggleBoneSelection(index) {
+    // Cannot select fixed bones
+    if (state.fixedBoneIndices.has(index)) {
+        return;
+    }
     const next = new Set(state.selectedBoneIndices);
     if (next.has(index)) next.delete(index);
     else next.add(index);
     setBoneSelection([...next], index, true);
+}
+
+function toggleBoneFixed(index) {
+    if (state.fixedBoneIndices.has(index)) {
+        state.fixedBoneIndices.delete(index);
+    } else {
+        state.fixedBoneIndices.add(index);
+    }
+    syncSelectionToUI();
 }
 
 function buildArapSystem(restPositions, neighborCount = 6) {
@@ -601,6 +617,11 @@ function onPointerDown(event) {
     const meshIndex = state.boneMeshes.indexOf(hit.object);
     if (meshIndex < 0) return;
 
+    // Prevent dragging fixed bones
+    if (state.fixedBoneIndices.has(meshIndex)) {
+        return;
+    }
+
     const modifier = event.shiftKey || event.ctrlKey || event.metaKey;
     if (modifier) {
         toggleBoneSelection(meshIndex);
@@ -648,6 +669,13 @@ function onPointerMove(event) {
     const delta = localTarget.clone().sub(state.dragActiveLocalStart);
 
     const handles = new Map();
+    
+    // Add fixed bones as immobile constraints to handles
+    for (const fixedIdx of state.fixedBoneIndices) {
+        handles.set(fixedIdx, state.arap.currentPositions[fixedIdx].clone());
+    }
+    
+    // Add dragged bones with delta movement
     for (const idx of state.selectedBoneIndices) {
         const startPos = state.dragStartPositions.get(idx);
         if (!startPos) continue;
@@ -670,6 +698,29 @@ function onPointerUp() {
 function onDoubleClick() {
     clearBoneSelection();
     onPointerUp();
+}
+
+function onContextMenu(event) {
+    event.preventDefault();
+    if (!state.boneMeshes.length) return;
+    
+    getPointerNDC(event);
+    state.raycaster.setFromCamera(state.pointer, state.camera);
+    const hits = state.raycaster.intersectObjects(state.boneMeshes, false);
+    if (!hits.length) return;
+
+    const hit = hits[0];
+    const meshIndex = state.boneMeshes.indexOf(hit.object);
+    if (meshIndex < 0) return;
+
+    // Shift+right-click for multi-fixed
+    if (event.shiftKey) {
+        toggleBoneFixed(meshIndex);
+    } else {
+        // Single right-click: clear all fixed, then add this one
+        state.fixedBoneIndices.clear();
+        toggleBoneFixed(meshIndex);
+    }
 }
 
 function animate() {
