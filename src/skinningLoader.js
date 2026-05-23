@@ -5,6 +5,7 @@
  * const { proxyNodes, skinIndices, skinWeights } = 
  *   await loadSkinningData('./output_nodes24_sigma5.0');
  */
+import * as THREE from 'three';
 
 export async function loadSkinningData(dataPath, K = 4) {
     /**

@@ -1,573 +1,684 @@
 /**
- * Skinning Data Visualizer
- * 
- * 기능:
- * - 스키닝 데이터 (proxy nodes + weights) 로드
- * - 프록시 노드를 구체로 시각화
- * - 본 선택 및 회전 제어
+ * Skinning Demo - Gaussian Splat Manipulation and Rigging Controls
+ * - Gaussian splat scale and alpha manipulation
+ * - Global rigid body transformation (rotation and translation) controls
  */
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { DropInViewer } from '@mkkellogg/gaussian-splats-3d';
+import { extractRotation3D, outerProduct3 } from './mathUtils.js';
+import { getGaussianSplatLBSInjection } from './shaders.js';
 
-// 전역 상태
 const state = {
     scene: null,
     camera: null,
     renderer: null,
     controls: null,
     viewer: null,
-    
-    proxyNodes: [],
-    skinIndices: null,
-    skinWeights: null,
-    
-    nodeMeshes: [],
-    edgeLines: null,
-    
-    selectedBoneIdx: 0,
-    boneMatrices: [],
+    contentGroup: null,
+    skinningPoints: [],
+    boneMeshes: [],
+    selectedBoneIndices: [],
+    activeBoneIndex: -1,
+    arap: null,
+    raycaster: new THREE.Raycaster(),
+    pointer: new THREE.Vector2(),
+    dragPlane: new THREE.Plane(),
+    dragStartPoint: new THREE.Vector3(),
+    dragOffset: new THREE.Vector3(),
+    dragStartPositions: new Map(),
+    dragActiveLocalStart: new THREE.Vector3(),
+    isDraggingBone: false,
+    globalTransform: new THREE.Matrix4(),
     boneTexture: null,
+    boneTextureWidth: 0,
+    boneTextureHeight: 0,
+    splatSkinningReady: false,
 };
 
-// ====== 초기화 ======
-window.addEventListener('load', initScene);
+window.appState = state;
 
-async function initScene() {
-    const canvas = document.getElementById('canvas');
+window.addEventListener('DOMContentLoaded', initDemo);
+
+function initDemo() {
+    console.log('Initializing demo environment');
     
-    // Three.js 씬 설정
-    state.scene = new THREE.Scene();
-    state.scene.background = new THREE.Color(0x1a1a1a);
+    const container = document.getElementById('app') || document.body;
     
-    state.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
-        // 더 가까이에서 관찰하기 위해 초기 위치를 기존(0,30,80)보다 가깝게 설정
-        // 초기 카메라 위치를 가까이로 설정하여 노드가 더 크게 보이도록 함
-        state.camera.position.set(0, 20, 40);
-    state.camera.lookAt(0, 0, 0);
+    const existingCanvas = document.getElementById('canvas');
+    if (existingCanvas) {
+        state.renderer = new THREE.WebGLRenderer({ canvas: existingCanvas, antialias: true, alpha: false });
+    } else {
+        state.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        state.renderer.domElement.id = 'canvas';
+        container.appendChild(state.renderer.domElement);
+    }
     
-    state.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    state.renderer.setPixelRatio(window.devicePixelRatio || 1);
     state.renderer.setSize(window.innerWidth, window.innerHeight);
-    state.renderer.setPixelRatio(window.devicePixelRatio);
-    
-    // OrbitControls - main.js와 동일한 방식
+    state.renderer.sortObjects = true;
+
+    state.scene = new THREE.Scene();
+    state.scene.background = new THREE.Color(0x222227);
+
+    state.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+    state.camera.position.set(0, 20, 40);
+    state.camera.lookAt(0, 0, 0);
+
     state.controls = new OrbitControls(state.camera, state.renderer.domElement);
     state.controls.enableDamping = true;
     state.controls.dampingFactor = 0.05;
-    state.controls.autoRotate = false;
-        // 카메라 타겟을 카메라 Y 위치와 동일하게 맞춤
-        state.controls.target.set(0, 20, 0);
+
+    const dir1 = new THREE.DirectionalLight(0xffffff, 3.0); dir1.position.set(50, 100, 50);
+    const dir2 = new THREE.DirectionalLight(0xffffff, 2.0); dir2.position.set(-50, 100, -50);
+    const amb = new THREE.AmbientLight(0xffffff, 0.8);
+    state.scene.add(dir1, dir2, amb);
     
-    // 조명
-    const light1 = new THREE.DirectionalLight(0xffffff, 3.0);
-    light1.position.set(50, 100, 50);
-    const light2 = new THREE.DirectionalLight(0xffffff, 2.0);
-    light2.position.set(-50, 100, -50);
-    const ambient = new THREE.AmbientLight(0xffffff, 0.8);
-    state.scene.add(light1, light2, ambient);
-    
-    // 애니메이션 루프
-    animate();
-    
-    // 윈도우 리사이즈
+    state.contentGroup = new THREE.Group();
+    state.scene.add(state.contentGroup);
+
     window.addEventListener('resize', onWindowResize);
-    
-    updateStatus('✅ 준비 완료', 'ok');
+    setupEventListeners();
+    setupPickingEvents();
+
+    animate();
 }
 
-// ====== 데이터 로드 ======
-window.loadData = async function() {
-    const dataPath = document.getElementById('dataPath').value;
-    
+function setupEventListeners() {
+    document.getElementById('loadBtn')?.addEventListener('click', () => loadData());
+    document.getElementById('gsScale')?.addEventListener('input', setGSScale);
+    document.getElementById('gsAlpha')?.addEventListener('input', setGSAlpha);
+    document.getElementById('rotX')?.addEventListener('input', updateBoneRotation);
+    document.getElementById('rotY')?.addEventListener('input', updateBoneRotation);
+    document.getElementById('rotZ')?.addEventListener('input', updateBoneRotation);
+    document.getElementById('selectedBone')?.addEventListener('input', updateSelectedBone);
+    document.getElementById('cameraDist')?.addEventListener('input', updateCameraDistance);
+    document.getElementById('showSplats')?.addEventListener('change', (e) => {
+        if (state.viewer) state.viewer.visible = e.target.checked;
+    });
+    document.getElementById('showNodes')?.addEventListener('change', (e) => {
+        if (state.boneMeshes) state.boneMeshes.forEach(m => m.visible = e.target.checked);
+    });
+}
+
+function setupPickingEvents() {
+    const dom = state.renderer.domElement;
+    dom.addEventListener('pointerdown', onPointerDown);
+    dom.addEventListener('pointermove', onPointerMove);
+    dom.addEventListener('pointerup', onPointerUp);
+    dom.addEventListener('pointerleave', onPointerUp);
+    dom.addEventListener('dblclick', onDoubleClick);
+}
+
+async function loadData() {
+    const dataPath = document.getElementById('dataPath')?.value;
     if (!dataPath) {
-        updateStatus('❌ 데이터 경로를 입력하세요', 'error');
+        console.error('Data path is required');
         return;
     }
-    
+
+    console.log('Starting data loading from:', dataPath);
+
     try {
-        updateStatus('⏳ 데이터 로드 중...', 'loading');
-        
-        // proxy_nodes.json 로드
-        console.log(`�� ${dataPath}/proxy_nodes.json 로드 중...`);
         const nodesResp = await fetch(`${dataPath}/proxy_nodes.json`);
-        if (!nodesResp.ok) {
-            throw new Error(`proxy_nodes.json 로드 실패: ${nodesResp.status}`);
-        }
+        if (!nodesResp.ok) throw new Error(`Failed to fetch proxy_nodes.json: ${nodesResp.status}`);
+        
         const nodesData = await nodesResp.json();
-        
-        state.proxyNodes = nodesData.map(p => new THREE.Vector3(p.x, p.y, p.z));
-        console.log(`✅ ${state.proxyNodes.length}개 프록시 노드 로드됨`);
-        
-        // skinning_data.bin 로드
-        console.log(`📂 ${dataPath}/skinning_data.bin 로드 중...`);
-        const binResp = await fetch(`${dataPath}/skinning_data.bin`);
-        if (!binResp.ok) {
-            throw new Error(`skinning_data.bin 로드 실패: ${binResp.status}`);
-        }
-        const binBuffer = await binResp.arrayBuffer();
-        const skinDataFloat32 = new Float32Array(binBuffer);
-        
-        const K = 4;
-        const numPoints = skinDataFloat32.length / (2 * K);
-        state.skinIndices = new Uint32Array(numPoints * K);
-        state.skinWeights = new Float32Array(numPoints * K);
-        
-        for (let i = 0; i < numPoints; i++) {
-            for (let j = 0; j < K; j++) {
-                state.skinIndices[i * K + j] = skinDataFloat32[i * (2 * K) + j];
-                state.skinWeights[i * K + j] = skinDataFloat32[i * (2 * K) + K + j];
-            }
-        }
-        console.log(`✅ ${numPoints}개 포인트 스킨 데이터 로드됨`);
-        
-        // 본 텍스처 생성
-        createBoneTexture();
-        
-        // 프록시 노드 시각화
-        visualizeProxyNodes();
+        state.skinningPoints = nodesData.map(p => new THREE.Vector3(p.x, p.y, p.z));
+        state.arap = buildArapSystem(state.skinningPoints, 6);
+        visualizeSkinningPoints();
+        console.log(`Skinning points loaded: ${state.skinningPoints.length} vertices`);
 
-        // 가우시안 스플랫 로드 (옵션)
-        const showSplats = document.getElementById('showSplats')?.checked ?? true;
-        if (showSplats) {
-            await loadGaussianSplats(dataPath);
-            // 적용된 alpha 값 반영
-            setGSAlpha();
+        let gsPath = dataPath.replace(/_nodes\d+_sigma[\d.]+$/, '') + '.ply';
+        if (gsPath.startsWith('public/')) gsPath = gsPath.replace('public/', '/');
+        else if (!gsPath.startsWith('.') && !gsPath.startsWith('/')) gsPath = '/' + gsPath;
+
+        console.log('Gaussian splat path:', gsPath);
+
+        if (state.viewer) {
+            state.contentGroup.remove(state.viewer);
+            state.viewer = null;
         }
-        
-        updateStatus(`✅ 로드 완료: ${state.proxyNodes.length} nodes, ${numPoints} points`, 'ok');
-        
-        // 본 범위 업데이트
-        const maxBone = Math.max(0, state.proxyNodes.length - 1);
-        document.getElementById('selectedBone').max = maxBone;
-        
+
+        state.viewer = new DropInViewer({
+            gpuAcceleratedSort: false,
+            sharedMemoryForWorkers: false,
+            sphericalHarmonicsDegree: 2,
+        });
+        state.contentGroup.add(state.viewer);
+
+        const scaleVal = parseFloat(document.getElementById('gsScale')?.value || 1.0);
+        await state.viewer.addSplatScene(gsPath, {
+            progressiveLoad: true,
+            position: [0, 0, 0],
+            scale: [scaleVal, scaleVal, scaleVal],
+        });
+
+        const splatCount = state.viewer.splatMesh?.getSplatCount() || 0;
+        console.log(`Gaussian splats loaded: ${splatCount} splats`);
+
+        // Initialize Linear Blend Skinning for Gaussian splats
+        setupGaussianSkinning();
+
+        if (state.skinningPoints.length > 0) {
+            const bbox = new THREE.Box3().setFromPoints(state.skinningPoints);
+            const center = bbox.getCenter(new THREE.Vector3());
+            const maxDim = Math.max(bbox.getSize(new THREE.Vector3()).x, 15);
+            
+            state.controls.target.copy(center);
+            state.camera.position.copy(center).addScaledVector(new THREE.Vector3(1, 1, 1).normalize(), maxDim * 2.5);
+            state.camera.lookAt(center);
+            state.camera.updateProjectionMatrix();
+        }
+
+        console.log('Data loading completed successfully');
+
     } catch (error) {
-        console.error('❌ 로드 실패:', error);
-        updateStatus(`❌ 에러: ${error.message}`, 'error');
+        console.error('Error during data loading:', error);
     }
-};
+}
 
-function createBoneTexture() {
-    const numBones = state.proxyNodes.length;
-    const width = Math.ceil(Math.sqrt(numBones));
-    const height = Math.ceil(numBones / width);
+function visualizeSkinningPoints() {
+    // Clear previous bone visualizations
+    if (state.boneMeshes.length > 0) {
+        state.boneMeshes.forEach(m => state.contentGroup.remove(m));
+    }
+    state.boneMeshes = [];
+
+    const sphereGeo = new THREE.SphereGeometry(0.02, 16, 16);
+    const positions = state.arap?.currentPositions ?? state.skinningPoints;
     
-    const boneData = new Float32Array(width * height * 4);
-    
-    // 각 본의 4x4 행렬을 저장
-    state.boneMatrices = [];
-    
-    for (let i = 0; i < numBones; i++) {
-        const mat4 = new THREE.Matrix4(); // 항등 행렬
-        state.boneMatrices.push(mat4);
+    positions.forEach((point) => {
+        const material = new THREE.MeshStandardMaterial({
+            color: 0x4488ff,
+            emissive: 0x2244ff,
+            emissiveIntensity: 0.5,
+            depthTest: false,
+        });
         
-        // 4x4 행렬을 float32 배열에 저장 (column-major)
-        const arr = mat4.toArray();
-        for (let k = 0; k < 16; k++) {
-            boneData[i * 16 + k] = arr[k];
+        const sphere = new THREE.Mesh(sphereGeo, material);
+        sphere.position.copy(point);
+        sphere.renderOrder = 999;
+        state.contentGroup.add(sphere);
+        state.boneMeshes.push(sphere);
+    });
+
+    syncSelectionToUI();
+}
+
+function getSplatCountAndCenters(splatMesh) {
+    const splatCount = splatMesh?.getSplatCount?.() ?? 0;
+    const centers = [];
+
+    if (!splatMesh || splatCount <= 0) {
+        return { splatCount: 0, centers };
+    }
+
+    if (typeof splatMesh.getSplatCenter === 'function') {
+        const tmp = new THREE.Vector3();
+        for (let i = 0; i < splatCount; i++) {
+            splatMesh.getSplatCenter(i, tmp);
+            centers.push(tmp.clone());
+        }
+        return { splatCount, centers };
+    }
+
+    const buffer = splatMesh.scenes?.[0]?.splatBuffer ?? splatMesh.splatBuffers?.[0];
+    const rawCenters = buffer?.centers || buffer?.getCenters?.();
+    if (rawCenters) {
+        for (let i = 0; i < splatCount; i++) {
+            centers.push(new THREE.Vector3(rawCenters[i * 3], rawCenters[i * 3 + 1], rawCenters[i * 3 + 2]));
         }
     }
-    
-    state.boneTexture = new THREE.DataTexture(
-        boneData,
-        width,
-        height,
-        THREE.RGBAFormat,
-        THREE.FloatType
-    );
+    return { splatCount, centers };
+}
+
+function setupGaussianSkinning() {
+    const splatMesh = state.viewer?.splatMesh;
+    if (!splatMesh || !state.arap) return;
+
+    const mat = splatMesh.material;
+    const texSize = mat?.uniforms?.centersColorsTextureSize?.value;
+    if (!mat || !texSize) return;
+
+    const texW = Math.max(1, texSize.x | 0);
+    const texH = Math.max(1, texSize.y | 0);
+    const splatCount = splatMesh.getSplatCount?.() ?? (texW * texH);
+    const { centers } = getSplatCountAndCenters(splatMesh);
+
+    // Create and initialize bone transformation texture
+    state.boneTextureWidth = state.arap.currentPositions.length * 4;
+    state.boneTextureHeight = 1;
+    const boneData = new Float32Array(state.boneTextureWidth * state.boneTextureHeight * 4);
+    updateBoneTextureData(boneData);
+    state.boneTexture = new THREE.DataTexture(boneData, state.boneTextureWidth, state.boneTextureHeight, THREE.RGBAFormat, THREE.FloatType);
+    state.boneTexture.internalFormat = 'RGBA32F';
     state.boneTexture.minFilter = THREE.NearestFilter;
     state.boneTexture.magFilter = THREE.NearestFilter;
     state.boneTexture.needsUpdate = true;
-    
-    console.log(`📊 본 텍스처 생성: ${width}×${height} (${numBones} bones)`);
+
+    // Compute per-splat bone influence indices and weights
+    const skinIndices = new Float32Array(texW * texH * 4);
+    const skinWeights = new Float32Array(texW * texH * 4);
+    const sigma = 5.0;
+    for (let i = 0; i < Math.min(centers.length, splatCount); i++) {
+        const center = centers[i];
+        const allWeights = state.arap.restPositions.map((bonePos, idx) => {
+            const dist = center.distanceTo(bonePos);
+            const w = Math.exp(-(dist * dist) / (2 * sigma * sigma));
+            return { index: idx, weight: w };
+        }).sort((a, b) => b.weight - a.weight).slice(0, 4);
+
+        const sum = Math.max(allWeights.reduce((acc, item) => acc + item.weight, 0), 1e-5);
+        for (let j = 0; j < 4; j++) {
+            const item = allWeights[j] || { index: 0, weight: 0 };
+            skinIndices[i * 4 + j] = item.index;
+            skinWeights[i * 4 + j] = item.weight / sum;
+        }
+    }
+
+    state.skinIndicesTexture = new THREE.DataTexture(skinIndices, texW, texH, THREE.RGBAFormat, THREE.FloatType);
+    state.skinIndicesTexture.internalFormat = 'RGBA32F';
+    state.skinIndicesTexture.minFilter = THREE.NearestFilter;
+    state.skinIndicesTexture.magFilter = THREE.NearestFilter;
+    state.skinIndicesTexture.needsUpdate = true;
+
+    state.skinWeightsTexture = new THREE.DataTexture(skinWeights, texW, texH, THREE.RGBAFormat, THREE.FloatType);
+    state.skinWeightsTexture.internalFormat = 'RGBA32F';
+    state.skinWeightsTexture.minFilter = THREE.NearestFilter;
+    state.skinWeightsTexture.magFilter = THREE.NearestFilter;
+    state.skinWeightsTexture.needsUpdate = true;
+
+    mat.uniforms.boneTexture = { value: state.boneTexture };
+    mat.uniforms.boneTextureWidth = { value: state.boneTextureWidth };
+    mat.uniforms.boneTextureHeight = { value: state.boneTextureHeight };
+    mat.uniforms.skinIndicesTexture = { value: state.skinIndicesTexture };
+    mat.uniforms.skinWeightsTexture = { value: state.skinWeightsTexture };
+
+    const injection = getGaussianSplatLBSInjection();
+    if (!mat.vertexShader?.includes('skinIndicesTexture') && mat.vertexShader) {
+        let vs = mat.vertexShader;
+        vs = vs.replace(/void\s+main\s*\(\s*\)\s*\{/, injection.mainFunctionPrefix);
+        vs = vs.replace(
+            /vec3\s+splatCenter\s*=\s*uintBitsToFloat\s*\(\s*uvec3\s*\(\s*sampledCenterColor\s*\.\s*gba\s*\)\s*\)\s*;/,
+            `vec3 splatCenter = uintBitsToFloat(uvec3(sampledCenterColor.gba));\n            ${injection.splatCenterModification}`
+        );
+        mat.vertexShader = vs;
+        mat.needsUpdate = true;
+    }
+
+    state.splatSkinningReady = true;
+    console.log('Gaussian splat Linear Blend Skinning initialized successfully');
 }
 
-// Gaussian Splat 로드 및 제어
-async function loadGaussianSplats(dataPath) {
-    try {
-        const gsPath = dataPath.replace(/_nodes\d+_sigma[\d.]+$/, '') + '.ply';
-        console.log(`📂 GS 로드 시도: ${gsPath}`);
+function updateBoneTextureData(boneData) {
+    if (!state.arap) return;
+    const { currentPositions, restPositions, rotations } = state.arap;
+    const count = Math.min(currentPositions.length, restPositions.length, rotations.length);
 
-        if (!state.viewer) {
-            state.viewer = new DropInViewer({ gpuAcceleratedSort: true });
-            state.scene.add(state.viewer);
+    for (let i = 0; i < count; i++) {
+        const p = currentPositions[i];
+        const rest = restPositions[i];
+        const R = rotations[i];
+
+        const mCurrent = new THREE.Matrix4().makeTranslation(p.x, p.y, p.z);
+        const mRot = new THREE.Matrix4().setFromMatrix3(R);
+        const mRestInv = new THREE.Matrix4().makeTranslation(-rest.x, -rest.y, -rest.z);
+        mCurrent.multiply(mRot).multiply(mRestInv);
+
+        const arr = mCurrent.toArray();
+        const offset = i * 16;
+        for (let k = 0; k < 16; k++) {
+            boneData[offset + k] = arr[k];
         }
-
-        const scaleVal = parseFloat(document.getElementById('gsScale')?.value || 1.0);
-
-        await state.viewer.addSplatScene(gsPath, {
-            progressiveLoad: true,
-            splatAlphaRemovalThreshold: 1,
-            position: [0, 0, 0],
-            rotation: [0, 0, 0, 1],
-            scale: [scaleVal, scaleVal, scaleVal]
-        });
-
-        // 진단: viewer / splatMesh 출력 및 강제 가시화 시도
-        console.log('🧭 DropInViewer after addSplatScene:', state.viewer);
-        try {
-            console.log('🧭 viewer.splatMesh:', state.viewer.splatMesh);
-            console.log('🧭 viewer children:', state.viewer.children ? state.viewer.children.map(c => c.type + (c.name ? '/' + c.name : '')) : state.viewer.children);
-
-            // 기존 처럼 traverse로 소재에 알파 적용
-            state.viewer.traverse((child) => {
-                if (child.isMesh && child.material) {
-                    child.material.transparent = true;
-                    const alpha = parseFloat(document.getElementById('gsAlpha')?.value || 0.8);
-                    if ('opacity' in child.material) child.material.opacity = alpha;
-                    if (child.material.uniforms && child.material.uniforms.u_alpha) child.material.uniforms.u_alpha.value = alpha;
-                    child.material.needsUpdate = true;
-                }
-            });
-
-            // splatMesh가 직접 노출되는 경우 추가로 강제 적용
-            if (state.viewer.splatMesh) {
-                const sm = state.viewer.splatMesh;
-                sm.visible = true;
-                if (sm.material) {
-                    sm.material.transparent = true;
-                    const alpha = parseFloat(document.getElementById('gsAlpha')?.value || 0.8);
-                    if ('opacity' in sm.material) sm.material.opacity = alpha;
-                    if (sm.material.uniforms && sm.material.uniforms.u_alpha) sm.material.uniforms.u_alpha.value = alpha;
-                    sm.material.needsUpdate = true;
-                }
-                try {
-                    console.log('🔢 splatCount:', typeof sm.getSplatCount === 'function' ? sm.getSplatCount() : 'n/a');
-                } catch (e) {}
-                // 프러스터럼 컬링으로 인해 사라질 수 있으므로 비활성화
-                try { sm.frustumCulled = false; } catch (e) {}
-                try { sm.renderOrder = 1000; } catch (e) {}
-                try { if (sm.material) { sm.material.depthTest = false; sm.material.depthWrite = false; sm.material.side = THREE.DoubleSide; sm.material.needsUpdate = true; } } catch (e) {}
-            }
-            // 디버그 포인트 생성 (항상 시도)
-            try { createSplatDebugPoints(state.viewer.splatMesh); } catch (e) { console.warn('createSplatDebugPoints error', e); }
-
-            // viewer가 자체 업데이트 함수가 있으면 호출하고, 매트릭스 월드 갱신
-            if (typeof state.viewer.update === 'function') {
-                try { state.viewer.update(); } catch (e) { console.warn('viewer.update() threw', e); }
-            }
-            try { state.viewer.updateMatrixWorld(true); } catch (e) {}
-        } catch (e) {
-            console.warn('splat diagnostic failed', e);
-        }
-
-        console.log('✅ GS 로드 완료');
-        // 카메라를 스플랫 중심/크기에 맞춰 자동 조정
-        try {
-            const bbox = new THREE.Box3().setFromObject(state.viewer);
-            const center = bbox.getCenter(new THREE.Vector3());
-            const size = bbox.getSize(new THREE.Vector3());
-            const maxDim = Math.max(size.x, size.y, size.z, 1.0);
-            const desiredDist = maxDim * 1.8 + 10; // 경험적 보정
-            // 카메라 타겟과 컨트롤 업데이트
-            state.controls.target.copy(center);
-            state.controls.update();
-            // 카메라 위치를 타겟에서 떨어뜨려 설정
-            const dir = state.camera.position.clone().sub(state.controls.target).normalize();
-            state.camera.position.copy(state.controls.target).addScaledVector(dir, desiredDist);
-            state.camera.lookAt(center);
-            document.getElementById('cameraDist').value = Math.round(desiredDist);
-            document.getElementById('cameraDistValue').textContent = Math.round(desiredDist);
-        } catch (e) {
-            // bbox 계산 실패는 무시
-            console.warn('카메라 자동조정 실패:', e.message || e);
-        }
-    } catch (err) {
-        console.warn('⚠️ GS 로드 실패:', err.message || err);
     }
 }
 
-// 스플랫의 센터를 추출해 Points로 시각화 (디버그용)
-function createSplatDebugPoints(splatMesh) {
-    // 기존 디버그 포인트 제거
-    if (state.splatDebugPoints) {
-        state.scene.remove(state.splatDebugPoints);
-        state.splatDebugPoints.geometry.dispose();
-        state.splatDebugPoints.material.dispose();
-        state.splatDebugPoints = null;
-    }
-
-    if (!splatMesh) return;
-
-    let centersArray = null;
-    try {
-        // 우선 getSplatCenter 함수 사용
-        if (typeof splatMesh.getSplatCenter === 'function') {
-            const count = typeof splatMesh.getSplatCount === 'function' ? splatMesh.getSplatCount() : 0;
-            const positions = new Float32Array(count * 3);
-            const tmp = new THREE.Vector3();
-            for (let i = 0; i < count; i++) {
-                splatMesh.getSplatCenter(i, tmp);
-                tmp.applyMatrix4(splatMesh.matrixWorld);
-                positions[i * 3 + 0] = tmp.x;
-                positions[i * 3 + 1] = tmp.y;
-                positions[i * 3 + 2] = tmp.z;
-            }
-            centersArray = positions;
-        } else {
-            // 내부 버퍼에서 추출
-            const buffer = splatMesh.scenes ? splatMesh.scenes[0].splatBuffer : (splatMesh.splatBuffers ? splatMesh.splatBuffers[0] : null);
-            const raw = buffer && (buffer.centers || (buffer.getCenters ? buffer.getCenters() : null));
-            if (raw) {
-                // raw는 로컬 공간 좌표
-                const count = raw.length / 3;
-                const positions = new Float32Array(count * 3);
-                const v = new THREE.Vector3();
-                for (let i = 0; i < count; i++) {
-                    v.set(raw[i * 3 + 0], raw[i * 3 + 1], raw[i * 3 + 2]);
-                    v.applyMatrix4(splatMesh.matrixWorld);
-                    positions[i * 3 + 0] = v.x;
-                    positions[i * 3 + 1] = v.y;
-                    positions[i * 3 + 2] = v.z;
-                }
-                centersArray = positions;
-            }
-        }
-    } catch (e) {
-        console.warn('createSplatDebugPoints: center extraction failed', e);
-        centersArray = null;
-    }
-
-    if (!centersArray) {
-        console.warn('createSplatDebugPoints: no centers available');
-        return;
-    }
-
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(centersArray, 3));
-
-    const gsScale = parseFloat(document.getElementById('gsScale')?.value || 1.0);
-    const size = Math.max(2.0, 3.0 * gsScale);
-
-    const mat = new THREE.PointsMaterial({
-        color: 0x88ccff,
-        size: size,
-        sizeAttenuation: true,
-        depthTest: false,
-        depthWrite: false
-    });
-
-    const points = new THREE.Points(geo, mat);
-    points.renderOrder = 2000;
-    state.splatDebugPoints = points;
-    state.scene.add(points);
-    console.log('🔍 Splat debug points added:', centersArray.length / 3);
+function refreshGaussianBoneTexture() {
+    if (!state.splatSkinningReady || !state.boneTexture || !state.arap) return;
+    const data = state.boneTexture.image.data;
+    updateBoneTextureData(data);
+    state.boneTexture.needsUpdate = true;
 }
 
 window.setGSScale = function() {
-    const v = parseFloat(document.getElementById('gsScale').value);
-    document.getElementById('gsScaleValue').textContent = v.toFixed(1);
-    if (!state.viewer) return;
-    state.viewer.scale.set(v, v, v);
+    const scale = parseFloat(document.getElementById('gsScale').value);
+    document.getElementById('gsScaleValue').textContent = scale.toFixed(1);
+    if (state.contentGroup) state.contentGroup.scale.setScalar(scale);
 };
 
 window.setGSAlpha = function() {
-    const v = parseFloat(document.getElementById('gsAlpha').value);
-    document.getElementById('gsAlphaValue').textContent = v.toFixed(2);
-    if (!state.viewer) return;
-    state.viewer.traverse((child) => {
-        if (child.isMesh && child.material) {
-            child.material.transparent = true;
-            if ('opacity' in child.material) child.material.opacity = v;
-            if (child.material.uniforms && child.material.uniforms.u_alpha) {
-                child.material.uniforms.u_alpha.value = v;
-            }
+    const alpha = parseFloat(document.getElementById('gsAlpha').value);
+    document.getElementById('gsAlphaValue').textContent = alpha.toFixed(2);
+    if (state.viewer?.splatMesh?.material?.uniforms?.opacity) {
+        state.viewer.splatMesh.material.uniforms.opacity.value = alpha;
+        if (state.viewer.splatMesh.material.needsUpdate !== undefined) {
+            state.viewer.splatMesh.material.needsUpdate = true;
         }
-    });
-};
-
-function visualizeProxyNodes() {
-    // 기존 노드 메시 제거
-    state.nodeMeshes.forEach(mesh => state.scene.remove(mesh));
-    state.nodeMeshes = [];
-    
-    if (state.proxyNodes.length === 0) return;
-    
-    const sphereGeo = new THREE.SphereGeometry(0.01, 12, 12);
-    
-    state.proxyNodes.forEach((node, idx) => {
-        const color = idx === state.selectedBoneIdx ? 0xff4444 : 0x4444ff;
-        const mat = new THREE.MeshStandardMaterial({
-            color,
-            emissive: color,
-            emissiveIntensity: 0.5,
-            metalness: 0.3,
-            roughness: 0.4,
-        });
-        const mesh = new THREE.Mesh(sphereGeo, mat);
-        mesh.position.copy(node);
-        mesh.userData.boneIdx = idx;
-        state.scene.add(mesh);
-        state.nodeMeshes.push(mesh);
-    });
-    
-    console.log(`🎨 ${state.proxyNodes.length}개 본 노드 시각화됨`);
-    
-    // 본 연결선 (선택사항)
-    updateBoneEdges();
-}
-
-function updateBoneEdges() {
-    if (state.edgeLines) {
-        state.scene.remove(state.edgeLines);
-        state.edgeLines = null;
     }
-    
-    if (!document.getElementById('showEdges')?.checked || state.proxyNodes.length === 0) return;
-    
-    const edgeGeo = new THREE.BufferGeometry();
-    const positions = [];
-    
-    // 간단한 연결: 인접한 본들끼리 연결
-    for (let i = 0; i < state.proxyNodes.length - 1; i++) {
-        positions.push(
-            state.proxyNodes[i].x, state.proxyNodes[i].y, state.proxyNodes[i].z,
-            state.proxyNodes[i + 1].x, state.proxyNodes[i + 1].y, state.proxyNodes[i + 1].z
-        );
-    }
-    
-    edgeGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
-    const lineMat = new THREE.LineBasicMaterial({
-        color: 0x888888,
-        linewidth: 1,
-        fog: false
-    });
-    state.edgeLines = new THREE.LineSegments(edgeGeo, lineMat);
-    state.scene.add(state.edgeLines);
-    
-    console.log(`📍 ${state.proxyNodes.length - 1}개 본 연결선 표시됨`);
-}
-
-// ====== 제어 함수 ======
-window.updateSelectedBone = function() {
-    const idx = parseInt(document.getElementById('selectedBone').value);
-    state.selectedBoneIdx = idx;
-    document.getElementById('selectedBoneValue').textContent = idx;
-    
-    // 노드 색상 업데이트
-    visualizeProxyNodes();
-    
-    // 초기화: 회전값 0으로 리셋
-    document.getElementById('rotX').value = 0;
-    document.getElementById('rotY').value = 0;
-    document.getElementById('rotZ').value = 0;
-    updateBoneRotation();
 };
 
 window.updateBoneRotation = function() {
-    const rotX = parseFloat(document.getElementById('rotX').value);
-    const rotY = parseFloat(document.getElementById('rotY').value);
-    const rotZ = parseFloat(document.getElementById('rotZ').value);
-    
-    document.getElementById('rotXValue').textContent = `${rotX}°`;
-    document.getElementById('rotYValue').textContent = `${rotY}°`;
-    document.getElementById('rotZValue').textContent = `${rotZ}°`;
-    
-    // 회전 행렬 생성 및 본 텍스처 업데이트
-    updateBoneTexture();
+    const rotX = THREE.MathUtils.degToRad(parseFloat(document.getElementById('rotX').value || 0));
+    const rotY = THREE.MathUtils.degToRad(parseFloat(document.getElementById('rotY').value || 0));
+    const rotZ = THREE.MathUtils.degToRad(parseFloat(document.getElementById('rotZ').value || 0));
+
+    document.getElementById('rotXValue').textContent = `${document.getElementById('rotX').value}°`;
+    document.getElementById('rotYValue').textContent = `${document.getElementById('rotY').value}°`;
+    document.getElementById('rotZValue').textContent = `${document.getElementById('rotZ').value}°`;
+
+    const euler = new THREE.Euler(rotX, rotY, rotZ, 'XYZ');
+    state.globalTransform = new THREE.Matrix4().makeRotationFromEuler(euler);
+    if (state.contentGroup) state.contentGroup.quaternion.setFromEuler(euler);
 };
 
-function updateBoneTexture() {
-    if (!state.boneTexture || state.boneMatrices.length === 0) return;
-    
-    const rotX = THREE.MathUtils.degToRad(parseFloat(document.getElementById('rotX').value));
-    const rotY = THREE.MathUtils.degToRad(parseFloat(document.getElementById('rotY').value));
-    const rotZ = THREE.MathUtils.degToRad(parseFloat(document.getElementById('rotZ').value));
-    
-    // 선택된 본의 행렬 업데이트
-    const mat = new THREE.Matrix4();
-    mat.makeRotationFromEuler(new THREE.Euler(rotX, rotY, rotZ, 'XYZ'));
-    state.boneMatrices[state.selectedBoneIdx] = mat;
-    
-    // 텍스처 데이터 업데이트
-    const data = state.boneTexture.image.data;
-    const arr = mat.toArray();
-    const offset = state.selectedBoneIdx * 16;
-    for (let k = 0; k < 16; k++) {
-        data[offset + k] = arr[k];
-    }
-    
-    state.boneTexture.needsUpdate = true;
-    
-    console.log(`🔄 본 ${state.selectedBoneIdx} 회전 업데이트`);
-}
+window.updateSelectedBone = function() {
+    const boneIdx = parseInt(document.getElementById('selectedBone').value);
+    setBoneSelection([boneIdx], boneIdx, true);
+};
 
 window.updateCameraDistance = function() {
     const dist = parseFloat(document.getElementById('cameraDist').value);
     document.getElementById('cameraDistValue').textContent = dist;
-    
-    if (state.controls) {
-        const direction = state.camera.position.clone().sub(state.controls.target).normalize();
-        state.camera.position.copy(state.controls.target).addScaledVector(direction, dist);
+    const dir = state.camera.position.clone().sub(state.controls.target).normalize();
+    state.camera.position.copy(state.controls.target).addScaledVector(dir, dist);
+};
+
+window.resetRig = function() {
+    if (!state.arap) {
+        console.warn('resetRig: ARAP deformation system has not been initialized');
+        return;
     }
+
+    state.controls.enabled = true;
+    state.isDraggingBone = false;
+    state.dragStartPositions.clear();
+
+    // Restore ARAP deformation system to rest pose
+    state.arap.clearHandles?.();
+    for (let i = 0; i < state.arap.restPositions.length; i++) {
+        state.arap.currentPositions[i].copy(state.arap.restPositions[i]);
+        if (state.arap.rotations[i]) state.arap.rotations[i].identity();
+    }
+
+    // Clear bone selection state
+    state.selectedBoneIndices = [];
+    state.activeBoneIndex = -1;
+    if (document.getElementById('selectedBone')) document.getElementById('selectedBone').value = '0';
+    if (document.getElementById('selectedBoneValue')) document.getElementById('selectedBoneValue').textContent = 'none';
+
+    // Reset rotation sliders
+    ['rotX', 'rotY', 'rotZ'].forEach((id) => {
+        const el = document.getElementById(id);
+        const valueEl = document.getElementById(`${id}Value`);
+        if (el) el.value = '0';
+        if (valueEl) valueEl.textContent = '0°';
+    });
+
+    // Reset global rigid body transformation
+    if (state.contentGroup) {
+        state.contentGroup.position.set(0, 0, 0);
+        state.contentGroup.quaternion.identity();
+        // Scale is preserved from Gaussian splat scale slider
+    }
+
+    // Synchronize deformation system state to visual representations
+    syncArapToMeshes();
+    syncSelectionToUI();
+    refreshGaussianBoneTexture();
+
+    console.log('Rig reset to rest pose');
 };
 
-window.onWindowResize = function() {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    state.camera.aspect = w / h;
+function onWindowResize() {
+    state.camera.aspect = window.innerWidth / window.innerHeight;
     state.camera.updateProjectionMatrix();
-    state.renderer.setSize(w, h);
-};
-
-// ====== UI 업데이트 ======
-function updateStatus(msg, type = 'info') {
-    const el = document.getElementById('loadStatus');
-    if (!el) return;
-    
-    el.textContent = msg;
-    el.className = `status-${type}`;
+    state.renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-// ====== 애니메이션 루프 ======
-let frameCount = 0;
-let lastTime = Date.now();
+function setSelectedBone(index, updateSlider = true) {
+    setBoneSelection([index], index, updateSlider);
+}
+
+function clearBoneSelection() {
+    state.selectedBoneIndices = [];
+    state.activeBoneIndex = -1;
+    if (document.getElementById('selectedBoneValue')) {
+        document.getElementById('selectedBoneValue').textContent = 'none';
+    }
+    if (document.getElementById('selectedBone')) {
+        document.getElementById('selectedBone').value = '0';
+    }
+    syncSelectionToUI();
+}
+
+function syncSelectionToUI() {
+    const selectedSet = new Set(state.selectedBoneIndices);
+    state.boneMeshes.forEach((mesh, i) => {
+        const selected = selectedSet.has(i);
+        const active = i === state.activeBoneIndex;
+        const material = mesh.material;
+        if (material) {
+            material.color.set(selected ? (active ? 0xffaa44 : 0xff4444) : 0x4488ff);
+            material.emissive.set(selected ? (active ? 0x885500 : 0x661111) : 0x2244ff);
+            material.emissiveIntensity = selected ? (active ? 1.0 : 0.9) : 0.5;
+        }
+        mesh.scale.setScalar(active ? 1.8 : selected ? 1.5 : 1.0);
+    });
+
+    if (document.getElementById('selectedBoneValue')) {
+        document.getElementById('selectedBoneValue').textContent =
+            state.selectedBoneIndices.length > 0 ? state.selectedBoneIndices.join(',') : 'none';
+    }
+}
+
+function setBoneSelection(indices, activeIndex = indices?.[0] ?? -1, updateSlider = true) {
+    const maxIdx = Math.max(0, state.boneMeshes.length - 1);
+    const filtered = [...new Set((indices || []).filter((i) => Number.isFinite(i)).map((i) => THREE.MathUtils.clamp(i, 0, maxIdx)))];
+    state.selectedBoneIndices = filtered;
+    state.activeBoneIndex = filtered.includes(activeIndex) ? activeIndex : (filtered[0] ?? -1);
+
+    if (updateSlider && document.getElementById('selectedBone')) {
+        document.getElementById('selectedBone').value = state.activeBoneIndex >= 0 ? String(state.activeBoneIndex) : '0';
+    }
+
+    syncSelectionToUI();
+}
+
+function toggleBoneSelection(index) {
+    const next = new Set(state.selectedBoneIndices);
+    if (next.has(index)) next.delete(index);
+    else next.add(index);
+    setBoneSelection([...next], index, true);
+}
+
+function buildArapSystem(restPositions, neighborCount = 6) {
+    // Initialize ARAP (As-Rigid-As-Possible) deformation system
+    const n = restPositions.length;
+    const rest = restPositions.map((p) => p.clone());
+    const current = restPositions.map((p) => p.clone());
+    const rotations = Array.from({ length: n }, () => new THREE.Matrix3().identity());
+    const edges = Array.from({ length: n }, () => []);
+
+    // Build k-nearest neighbor graph for deformation constraints
+    for (let i = 0; i < n; i++) {
+        const distances = [];
+        for (let j = 0; j < n; j++) {
+            if (i === j) continue;
+            distances.push({ j, d: rest[i].distanceTo(rest[j]) });
+        }
+        distances.sort((a, b) => a.d - b.d);
+        for (let k = 0; k < Math.min(neighborCount, distances.length); k++) {
+            const j = distances[k].j;
+            if (!edges[i].includes(j)) edges[i].push(j);
+            if (!edges[j].includes(i)) edges[j].push(i);
+        }
+    }
+
+    return { restPositions: rest, currentPositions: current, rotations, edges };
+}
+
+function solveArap(handles, iterations = 4) {
+    if (!state.arap) return;
+    const { restPositions, currentPositions, rotations, edges } = state.arap;
+
+    for (let iter = 0; iter < iterations; iter++) {
+        // ARAP local step: extract per-vertex rotations via polar decomposition
+        for (let i = 0; i < currentPositions.length; i++) {
+            const p_i = currentPositions[i];
+            const r_i = restPositions[i];
+            let S = new THREE.Matrix3().set(0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+            for (const j of edges[i]) {
+                const dp = currentPositions[j].clone().sub(p_i);
+                const dr = restPositions[j].clone().sub(r_i);
+                const outer = outerProduct3(dp, dr);
+                for (let k = 0; k < 9; k++) S.elements[k] += outer.elements[k];
+            }
+
+            rotations[i] = extractRotation3D(S);
+        }
+
+        // ARAP global step: update vertex positions using rotation constraints
+        for (let i = 0; i < currentPositions.length; i++) {
+            if (handles.has(i)) {
+                currentPositions[i].copy(handles.get(i));
+                continue;
+            }
+
+            const neighbors = edges[i];
+            if (!neighbors.length) continue;
+
+            const r_i = restPositions[i];
+            const R_i = rotations[i];
+            const posSum = new THREE.Vector3();
+
+            for (const j of neighbors) {
+                const p_j = currentPositions[j];
+                const r_j = restPositions[j];
+                const R_j = rotations[j];
+                const dr = r_i.clone().sub(r_j);
+                const rotated_dr = dr.clone()
+                    .applyMatrix3(R_i)
+                    .add(dr.clone().applyMatrix3(R_j))
+                    .multiplyScalar(0.5);
+                posSum.add(p_j.clone().add(rotated_dr));
+            }
+
+            const targetPos = posSum.divideScalar(neighbors.length);
+            currentPositions[i].lerp(targetPos, 0.75);
+        }
+    }
+
+    syncArapToMeshes();
+    refreshGaussianBoneTexture();
+}
+
+function syncArapToMeshes() {
+    if (!state.arap) return;
+    for (let i = 0; i < state.boneMeshes.length; i++) {
+        const mesh = state.boneMeshes[i];
+        const pos = state.arap.currentPositions[i];
+        if (mesh && pos) mesh.position.copy(pos);
+    }
+}
+
+function getPointerNDC(event) {
+    const rect = state.renderer.domElement.getBoundingClientRect();
+    state.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    state.pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+}
+
+function onPointerDown(event) {
+    if (!state.boneMeshes.length) return;
+    getPointerNDC(event);
+    state.raycaster.setFromCamera(state.pointer, state.camera);
+    const hits = state.raycaster.intersectObjects(state.boneMeshes, false);
+    if (!hits.length) return;
+
+    const hit = hits[0];
+    const meshIndex = state.boneMeshes.indexOf(hit.object);
+    if (meshIndex < 0) return;
+
+    const modifier = event.shiftKey || event.ctrlKey || event.metaKey;
+    if (modifier) {
+        toggleBoneSelection(meshIndex);
+        if (!state.selectedBoneIndices.includes(meshIndex)) return;
+    } else {
+        if (!state.selectedBoneIndices.includes(meshIndex)) {
+            setBoneSelection([meshIndex], meshIndex, true);
+        } else {
+            // If already selected bone is clicked, preserve multi-selection and update active bone
+            state.activeBoneIndex = meshIndex;
+            syncSelectionToUI();
+        }
+    }
+
+    if (state.activeBoneIndex < 0) return;
+
+    state.isDraggingBone = true;
+    state.controls.enabled = false;
+
+    state.dragStartPositions.clear();
+    for (const idx of state.selectedBoneIndices) {
+        state.dragStartPositions.set(idx, state.arap.currentPositions[idx].clone());
+    }
+
+    const activeMesh = state.boneMeshes[state.activeBoneIndex];
+    if (!activeMesh) return;
+
+    const worldPos = new THREE.Vector3();
+    activeMesh.getWorldPosition(worldPos);
+    state.dragPlane.setFromNormalAndCoplanarPoint(state.camera.getWorldDirection(new THREE.Vector3()).clone().negate(), worldPos);
+    state.dragOffset.copy(worldPos).sub(hit.point);
+    state.dragActiveLocalStart.copy(state.dragStartPositions.get(state.activeBoneIndex) || activeMesh.position);
+    state.renderer.domElement.style.cursor = 'grabbing';
+}
+
+function onPointerMove(event) {
+    if (!state.isDraggingBone || state.activeBoneIndex < 0 || !state.arap) return;
+    getPointerNDC(event);
+    state.raycaster.setFromCamera(state.pointer, state.camera);
+
+    const dragPoint = new THREE.Vector3();
+    if (!state.raycaster.ray.intersectPlane(state.dragPlane, dragPoint)) return;
+    dragPoint.add(state.dragOffset);
+    const localTarget = state.contentGroup.worldToLocal(dragPoint.clone());
+    const delta = localTarget.clone().sub(state.dragActiveLocalStart);
+
+    const handles = new Map();
+    for (const idx of state.selectedBoneIndices) {
+        const startPos = state.dragStartPositions.get(idx);
+        if (!startPos) continue;
+        const nextPos = startPos.clone().add(delta);
+        handles.set(idx, nextPos);
+        state.arap.currentPositions[idx].copy(nextPos);
+        if (state.boneMeshes[idx]) state.boneMeshes[idx].position.copy(nextPos);
+    }
+
+    solveArap(handles, 4);
+}
+
+function onPointerUp() {
+    if (!state.isDraggingBone) return;
+    state.isDraggingBone = false;
+    state.controls.enabled = true;
+    state.renderer.domElement.style.cursor = 'default';
+}
+
+function onDoubleClick() {
+    clearBoneSelection();
+    onPointerUp();
+}
 
 function animate() {
     requestAnimationFrame(animate);
-    
-    // OrbitControls 업데이트
-    if (state.controls) {
-        state.controls.update();
-    }
-    // DropInViewer 업데이트(있는 경우)
+    state.controls?.update();
     if (state.viewer && typeof state.viewer.update === 'function') {
-        try { state.viewer.update(); } catch (e) { console.warn('viewer.update() error', e); }
+        try { state.viewer.update(); } catch (e) {}
     }
-    
-    // UI 업데이트
-    state.nodeMeshes.forEach((mesh, idx) => {
-        const color = idx === state.selectedBoneIdx ? 0xff4444 : 0x4444ff;
-        mesh.material.color.setHex(color);
-        mesh.material.emissive.setHex(color);
-    });
-    
-    // 체크박스 상태 반영
-    const showNodes = document.getElementById('showNodes');
-    if (showNodes) {
-        state.nodeMeshes.forEach(mesh => {
-            mesh.visible = showNodes.checked;
-        });
-    }
-    
-    if (state.edgeLines) {
-        const showEdges = document.getElementById('showEdges');
-        if (showEdges) {
-            state.edgeLines.visible = showEdges.checked;
-        }
-    }
-    
     state.renderer.render(state.scene, state.camera);
-    
-    // FPS 표시
-    frameCount++;
-    const now = Date.now();
-    if (now - lastTime > 1000) {
-        const frameInfo = document.getElementById('frameInfo');
-        if (frameInfo) {
-            frameInfo.textContent = `FPS: ${frameCount}`;
-        }
-        frameCount = 0;
-        lastTime = now;
-    }
 }
+
+window.loadData = loadData;
