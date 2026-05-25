@@ -36,6 +36,10 @@ npm run dev
 
 Then open the local URL shown in the terminal (usually `http://localhost:5173`).
 
+If you want to use rigging, you should type `~/skinning_demo` (usually `http://localhost:5173/skinning_demo`).
+
+In skinning demo, you can pick static points with Shift + left click, also moving points with Shift + right click. All other points are moved by ARAP solver. If you want to unfocus, use double click.
+
 ## Build for Production
 
 ```bash
