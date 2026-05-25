@@ -133,6 +133,41 @@
             color: #ffaa44;
         }
 
+        .button-row {
+            display: flex;
+            gap: 6px;
+        }
+
+        .button-row button {
+            flex: 1;
+            width: auto;
+            margin-top: 0;
+        }
+
+        .keyframe-select {
+            width: 100%;
+            min-height: 120px;
+            padding: 6px;
+            background: #222;
+            color: #fff;
+            border: 1px solid #444;
+            border-radius: 4px;
+            outline: none;
+        }
+
+        .keyframe-meta {
+            margin-top: 6px;
+            font-size: 11px;
+            color: #bbb;
+            line-height: 1.4;
+        }
+
+        .hint-text {
+            margin-top: 6px;
+            font-size: 11px;
+            color: #888;
+        }
+
         /* Info Box */
         .info-box {
             position: fixed;
@@ -277,6 +312,54 @@
             <input type="range" id="rotZ" min="-180" max="180" value="0" 
                    oninput="updateBoneRotation()">
         </div>
+
+        <!-- 키프레임 등록 -->
+        <div class="control-group">
+            <label class="control-label">
+                키프레임
+                <span class="control-value" id="keyframeCount">0</span>
+            </label>
+            <input type="text" id="keyframeName" placeholder="예: idle_01" 
+                   style="width: 100%; padding: 6px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; margin-bottom: 8px;">
+            <div class="button-row" style="margin-bottom: 6px;">
+                <button onclick="window.registerKeyframe()">현재 포즈 등록</button>
+                <button id="applyKeyframeBtn" onclick="window.applySelectedKeyframe()" disabled>선택 적용</button>
+            </div>
+            <div class="button-row" style="margin-bottom: 8px;">
+                <button id="deleteKeyframeBtn" onclick="window.deleteSelectedKeyframe()" disabled>삭제</button>
+                <button onclick="window.clearKeyframes()">전체 삭제</button>
+            </div>
+            <div class="button-row" style="margin-bottom: 8px;">
+                <button onclick="window.importKeyframesFromFile()">파일 불러오기</button>
+                <button id="exportKeyframesBtn" onclick="window.exportKeyframesToFile()" disabled>파일 저장</button>
+            </div>
+            <input id="keyframeFileInput" type="file" accept="application/json,.json" style="display:none;" onchange="window.handleKeyframeFileImport(event)">
+            <select id="keyframeSelect" class="keyframe-select" size="6"></select>
+            <div class="keyframe-meta" id="keyframeInfo">등록된 키프레임이 없습니다.</div>
+            <div class="hint-text">선택된 본과 고정된 본 상태를 함께 저장합니다.</div>
+        </div>
+
+            <!-- Catmull-Rom 애니메이션 -->
+            <div class="control-group">
+                <label class="control-label">
+                    스플라인 애니메이션
+                    <span class="control-value" id="splineAnimStatus">대기 중</span>
+                </label>
+                <div class="button-row" style="margin-bottom: 6px;">
+                    <button id="startSplineAnimBtn" onclick="window.startSplineAnimation()">재생</button>
+                    <button id="stopSplineAnimBtn" onclick="window.stopSplineAnimation()" disabled>정지</button>
+                </div>
+                <div class="button-row" style="margin-bottom: 8px;">
+                    <button id="rebuildSplineAnimBtn" onclick="window.rebuildSplineAnimation()">트랙 다시 생성</button>
+                    <button onclick="window.toggleSplineAnimation()">재생/정지 토글</button>
+                </div>
+                <label class="control-label">
+                    재생 속도
+                    <span class="control-value" id="splineAnimSpeedValue">1.00×</span>
+                </label>
+                <input type="range" id="splineAnimSpeed" min="0.1" max="3.0" step="0.05" value="1.0" oninput="setSplineAnimationSpeed()">
+                <div class="hint-text">루프 재생은 명시적으로 정지할 때까지 계속됩니다.</div>
+            </div>
 
         <!-- 카메라 제어 -->
         <div class="control-group">

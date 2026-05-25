@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { getRippleZ } from './mathUtils.js';
-import { setupLidShaderInjection, getGaussianSplatLBSInjection } from './shaders.js';
+import { setupLidShaderInjection } from './shaders.js';
 import { RBF_WEIGHTS, RIPPLE, PORTAL, LIGHTS } from './constants.js';
+import { injectGaussianSplatLBS } from './rigging/index.js';
 
 export class HoloPortal {
     constructor(mainScene, mainCamera, renderer, plyPath, options = {}) {
@@ -163,87 +164,15 @@ export class HoloPortal {
         }
 
         console.log('💡 가우시안 스플랫 스킨닝 주입 시작...');
-
-        const splatCount = splatMesh.getSplatCount();
-        const mat = splatMesh.material;
-        const texWidth = mat.uniforms.centersColorsTextureSize.value.x;
-        const texHeight = mat.uniforms.centersColorsTextureSize.value.y;
-
-        // ====== 스플랫별 스킨 인덱스/가중치 텍스처 생성 ======
-        const skinIndices = new Float32Array(texWidth * texHeight * 4);
-        const skinWeights = new Float32Array(texWidth * texHeight * 4);
-
-        const sigma = RBF_WEIGHTS.SPLAT_SIGMA;
-        const center = new THREE.Vector3();
-
-        // 안전한 센터 추출 헬퍼
-        let getSafeCenter;
-        if (typeof splatMesh.getSplatCenter === 'function') {
-            getSafeCenter = (i, out) => splatMesh.getSplatCenter(i, out);
-        } else {
-            const buffer = splatMesh.scenes ? splatMesh.scenes[0].splatBuffer : splatMesh.splatBuffers[0];
-            const centers = buffer.centers || buffer.getCenters();
-            getSafeCenter = (i, out) => out.set(centers[i * 3], centers[i * 3 + 1], centers[i * 3 + 2]);
-        }
-
-        splatMesh.updateMatrixWorld(true);
-
-        // 각 스플랫에 대해 상위 4개 뼈의 가중치 계산
-        for (let i = 0; i < splatCount; i++) {
-            getSafeCenter(i, center);
-            center.applyMatrix4(splatMesh.matrixWorld);
-
-            let typedWeights = [];
-            for (let b = 0; b < this.restPositions.length; b++) {
-                const dist = center.distanceTo(this.restPositions[b]);
-                const w = Math.exp(-(dist * dist) / (2 * sigma * sigma));
-                typedWeights.push({ index: b, weight: w });
-            }
-
-            typedWeights.sort((a, b) => b.weight - a.weight);
-            const sum = typedWeights[0].weight + typedWeights[1].weight +
-                        typedWeights[2].weight + typedWeights[3].weight + 1e-5;
-
-            skinIndices[i * 4 + 0] = typedWeights[0].index;
-            skinIndices[i * 4 + 1] = typedWeights[1].index;
-            skinIndices[i * 4 + 2] = typedWeights[2].index;
-            skinIndices[i * 4 + 3] = typedWeights[3].index;
-
-            skinWeights[i * 4 + 0] = typedWeights[0].weight / sum;
-            skinWeights[i * 4 + 1] = typedWeights[1].weight / sum;
-            skinWeights[i * 4 + 2] = typedWeights[2].weight / sum;
-            skinWeights[i * 4 + 3] = typedWeights[3].weight / sum;
-        }
-
-        const skinIndicesTexture = new THREE.DataTexture(skinIndices, texWidth, texHeight, THREE.RGBAFormat, THREE.FloatType);
-        skinIndicesTexture.needsUpdate = true;
-        const skinWeightsTexture = new THREE.DataTexture(skinWeights, texWidth, texHeight, THREE.RGBAFormat, THREE.FloatType);
-        skinWeightsTexture.needsUpdate = true;
-
-        // ====== 쉐이더에 유니폼 추가 ======
-        mat.uniforms.boneTexture = { value: this.boneTexture };
-        mat.uniforms.boneTextureWidth = { value: this.boneTextureWidth };
-        mat.uniforms.boneTextureHeight = { value: this.boneTextureHeight };
-        mat.uniforms.skinIndicesTexture = { value: skinIndicesTexture };
-        mat.uniforms.skinWeightsTexture = { value: skinWeightsTexture };
-
-        // ====== 버텍스 쉐이더 수정 ======
-        const lbsInjection = getGaussianSplatLBSInjection();
-        let modifiedShader = mat.vertexShader;
-
-        modifiedShader = modifiedShader.replace(
-            /void\s+main\s*\([^)]*\)\s*\{/,
-            lbsInjection.mainFunctionPrefix
-        );
-
-        modifiedShader = modifiedShader.replace(
-            'vec3 splatCenter = uintBitsToFloat(uvec3(sampledCenterColor.gba));',
-            `vec3 splatCenter = uintBitsToFloat(uvec3(sampledCenterColor.gba));
-            ${lbsInjection.splatCenterModification}`
-        );
-
-        mat.vertexShader = modifiedShader;
-        mat.needsUpdate = true;
+        injectGaussianSplatLBS({
+            splatMesh,
+            restPositions: this.restPositions,
+            boneTexture: this.boneTexture,
+            boneTextureWidth: this.boneTextureWidth,
+            boneTextureHeight: this.boneTextureHeight,
+            sigma: RBF_WEIGHTS.SPLAT_SIGMA,
+            topK: RBF_WEIGHTS.TOP_K_BONES,
+        });
 
         console.log('✅ 가우시안 스플랫 LBS 주입 완료!');
     }

@@ -36,8 +36,19 @@ const state = {
     boneTextureWidth: 0,
     boneTextureHeight: 0,
     splatSkinningReady: false,
+    activeDataPath: '',
+    keyframes: [],
+    selectedKeyframeIndex: -1,
+    keyframeArapIterations: 20,
+    splineAnimationPlaying: false,
+    splineAnimationTime: 0,
+    splineAnimationSpeed: 1.0,
+    splineAnimationIterations: 10,
+    splineAnimationCurveCache: null,
+    splineAnimationHandleIndices: [],
+    splineAnimationPhaseOffset: 0,
+    frameClock: new THREE.Clock(),
 };
-
 window.appState = state;
 
 window.addEventListener('DOMContentLoaded', initDemo);
@@ -75,7 +86,7 @@ function initDemo() {
     const dir2 = new THREE.DirectionalLight(0xffffff, 2.0); dir2.position.set(-50, 100, -50);
     const amb = new THREE.AmbientLight(0xffffff, 0.8);
     state.scene.add(dir1, dir2, amb);
-    
+
     state.contentGroup = new THREE.Group();
     state.scene.add(state.contentGroup);
 
@@ -95,11 +106,13 @@ function setupEventListeners() {
     document.getElementById('rotZ')?.addEventListener('input', updateBoneRotation);
     document.getElementById('selectedBone')?.addEventListener('input', updateSelectedBone);
     document.getElementById('cameraDist')?.addEventListener('input', updateCameraDistance);
+    document.getElementById('splineAnimSpeed')?.addEventListener('input', setSplineAnimationSpeed);
+    document.getElementById('keyframeSelect')?.addEventListener('change', updateSelectedKeyframe);
     document.getElementById('showSplats')?.addEventListener('change', (e) => {
         if (state.viewer) state.viewer.visible = e.target.checked;
     });
     document.getElementById('showNodes')?.addEventListener('change', (e) => {
-        if (state.boneMeshes) state.boneMeshes.forEach(m => m.visible = e.target.checked);
+        if (state.boneMeshes) state.boneMeshes.forEach((m) => (m.visible = e.target.checked));
     });
 }
 
@@ -121,15 +134,19 @@ async function loadData() {
     }
 
     console.log('Starting data loading from:', dataPath);
+    state.activeDataPath = dataPath;
 
     try {
         const nodesResp = await fetch(`${dataPath}/proxy_nodes.json`);
         if (!nodesResp.ok) throw new Error(`Failed to fetch proxy_nodes.json: ${nodesResp.status}`);
-        
+
         const nodesData = await nodesResp.json();
-        state.skinningPoints = nodesData.map(p => new THREE.Vector3(p.x, p.y, p.z));
+        state.skinningPoints = nodesData.map((p) => new THREE.Vector3(p.x, p.y, p.z));
         state.arap = buildArapSystem(state.skinningPoints, 6);
         visualizeSkinningPoints();
+        if (document.getElementById('selectedBone')) {
+            document.getElementById('selectedBone').max = String(Math.max(0, state.skinningPoints.length - 1));
+        }
         console.log(`Skinning points loaded: ${state.skinningPoints.length} vertices`);
 
         let gsPath = dataPath.replace(/_nodes\d+_sigma[\d.]+$/, '') + '.ply';
@@ -160,14 +177,17 @@ async function loadData() {
         const splatCount = state.viewer.splatMesh?.getSplatCount() || 0;
         console.log(`Gaussian splats loaded: ${splatCount} splats`);
 
-        // Initialize Linear Blend Skinning for Gaussian splats
         setupGaussianSkinning();
+        loadPersistedKeyframes();
+        renderKeyframeList();
+        setSplineAnimationSpeed();
+        syncSplineAnimationUI();
 
         if (state.skinningPoints.length > 0) {
             const bbox = new THREE.Box3().setFromPoints(state.skinningPoints);
             const center = bbox.getCenter(new THREE.Vector3());
             const maxDim = Math.max(bbox.getSize(new THREE.Vector3()).x, 15);
-            
+
             state.controls.target.copy(center);
             state.camera.position.copy(center).addScaledVector(new THREE.Vector3(1, 1, 1).normalize(), maxDim * 2.5);
             state.camera.lookAt(center);
@@ -175,11 +195,461 @@ async function loadData() {
         }
 
         console.log('Data loading completed successfully');
-
     } catch (error) {
         console.error('Error during data loading:', error);
     }
 }
+
+function getKeyframeStorageKey() {
+    return `skinning_demo:keyframes:${state.activeDataPath || 'default'}`;
+}
+
+function cloneVectorArrayToJSON(vectors) {
+    return vectors.map((v) => [v.x, v.y, v.z]);
+}
+
+function makeKeyframeSnapshot(name) {
+    if (!state.arap) return null;
+
+    const selected = state.selectedBoneIndices.length > 0
+        ? [...state.selectedBoneIndices]
+        : (state.activeBoneIndex >= 0 ? [state.activeBoneIndex] : []);
+    const fixed = [...state.fixedBoneIndices];
+    const handleIndices = [...new Set([...selected, ...fixed])];
+
+    if (!handleIndices.length) {
+        return null;
+    }
+
+    return {
+        id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: name?.trim() || `Keyframe ${state.keyframes.length + 1}`,
+        createdAt: new Date().toISOString(),
+        selectedBoneIndices: selected,
+        fixedBoneIndices: fixed,
+        activeBoneIndex: state.activeBoneIndex,
+        handleIndices,
+        handlePositions: handleIndices.map((index) => ({
+            index,
+            position: state.arap.currentPositions[index]?.toArray?.() ?? [0, 0, 0],
+        })),
+        restPositions: cloneVectorArrayToJSON(state.arap.restPositions),
+        currentPositions: cloneVectorArrayToJSON(state.arap.currentPositions),
+        rotations: state.arap.rotations.map((m) => (m?.toArray?.() ?? new THREE.Matrix3().identity().toArray())),
+        globalTransform: state.globalTransform?.toArray?.() ?? new THREE.Matrix4().identity().toArray(),
+    };
+}
+
+function persistKeyframes() {
+    try {
+        localStorage.setItem(getKeyframeStorageKey(), JSON.stringify(state.keyframes));
+    } catch (error) {
+        console.warn('Failed to persist keyframes:', error);
+    }
+}
+
+function loadPersistedKeyframes() {
+    try {
+        const raw = localStorage.getItem(getKeyframeStorageKey());
+        state.keyframes = raw ? JSON.parse(raw) : [];
+        state.selectedKeyframeIndex = state.keyframes.length > 0 ? 0 : -1;
+    } catch (error) {
+        console.warn('Failed to load persisted keyframes:', error);
+        state.keyframes = [];
+        state.selectedKeyframeIndex = -1;
+    }
+}
+
+function updateSelectedKeyframe() {
+    const select = document.getElementById('keyframeSelect');
+    if (!select) return;
+    const idx = parseInt(select.value, 10);
+    state.selectedKeyframeIndex = Number.isFinite(idx) ? idx : -1;
+    syncKeyframeUI();
+}
+
+function renderKeyframeList() {
+    const select = document.getElementById('keyframeSelect');
+    const countEl = document.getElementById('keyframeCount');
+    if (!select) return;
+
+    select.innerHTML = '';
+    state.keyframes.forEach((kf, idx) => {
+        const option = document.createElement('option');
+        option.value = String(idx);
+        const selectedCount = kf.selectedBoneIndices?.length ?? 0;
+        const fixedCount = kf.fixedBoneIndices?.length ?? 0;
+        const label = kf.name || `Keyframe ${idx + 1}`;
+        option.textContent = `${String(idx + 1).padStart(2, '0')} | ${label} | M:${selectedCount} S:${fixedCount}`;
+        select.appendChild(option);
+    });
+
+    if (state.selectedKeyframeIndex >= 0 && state.selectedKeyframeIndex < state.keyframes.length) {
+        select.value = String(state.selectedKeyframeIndex);
+    } else if (state.keyframes.length > 0) {
+        state.selectedKeyframeIndex = 0;
+        select.value = '0';
+    } else {
+        state.selectedKeyframeIndex = -1;
+    }
+
+    if (countEl) countEl.textContent = String(state.keyframes.length);
+    syncKeyframeUI();
+}
+
+function syncKeyframeUI() {
+    const info = document.getElementById('keyframeInfo');
+    const applyBtn = document.getElementById('applyKeyframeBtn');
+    const deleteBtn = document.getElementById('deleteKeyframeBtn');
+    const exportBtn = document.getElementById('exportKeyframesBtn');
+    const hasKeyframes = state.keyframes.length > 0 && state.selectedKeyframeIndex >= 0;
+
+    if (applyBtn) applyBtn.disabled = !hasKeyframes;
+    if (deleteBtn) deleteBtn.disabled = !hasKeyframes;
+    if (exportBtn) exportBtn.disabled = state.keyframes.length === 0;
+
+    if (info) {
+        if (!hasKeyframes) {
+            info.textContent = '등록된 키프레임이 없습니다.';
+        } else {
+            const kf = state.keyframes[state.selectedKeyframeIndex];
+            info.textContent = `${kf.name} · selected ${kf.selectedBoneIndices?.length ?? 0} / static ${kf.fixedBoneIndices?.length ?? 0}`;
+        }
+    }
+}
+
+function registerKeyframe() {
+    const nameInput = document.getElementById('keyframeName');
+    const snapshot = makeKeyframeSnapshot(nameInput?.value);
+    if (!snapshot) {
+        console.warn('키프레임을 등록하려면 최소 하나의 본을 선택하거나 고정해야 합니다.');
+        return;
+    }
+
+    state.keyframes.push(snapshot);
+    state.selectedKeyframeIndex = state.keyframes.length - 1;
+    if (nameInput) nameInput.value = '';
+    persistKeyframes();
+    renderKeyframeList();
+    rebuildAndRefreshSplineAnimation();
+    console.log(`Keyframe registered: ${snapshot.name}`);
+}
+
+function applyKeyframe(index = state.selectedKeyframeIndex) {
+    if (!state.arap || index < 0 || index >= state.keyframes.length) return;
+
+    const kf = state.keyframes[index];
+    const selected = [...new Set((kf.selectedBoneIndices || []).filter((i) => Number.isInteger(i)))];
+    const fixed = [...new Set((kf.fixedBoneIndices || []).filter((i) => Number.isInteger(i)))];
+    const handles = new Map();
+
+    for (const item of kf.handlePositions || []) {
+        if (!Number.isInteger(item.index)) continue;
+        const pos = Array.isArray(item.position) ? new THREE.Vector3().fromArray(item.position) : null;
+        if (!pos) continue;
+        handles.set(item.index, pos);
+    }
+
+    state.fixedBoneIndices = new Set(fixed);
+    state.selectedBoneIndices = selected.filter((i) => !state.fixedBoneIndices.has(i));
+    state.activeBoneIndex = state.selectedBoneIndices[0] ?? state.fixedBoneIndices.values().next().value ?? -1;
+
+    for (const [idx, pos] of handles.entries()) {
+        if (state.arap.currentPositions[idx]) {
+            state.arap.currentPositions[idx].copy(pos);
+        }
+    }
+
+    if (handles.size > 0) {
+        solveArap(handles, state.keyframeArapIterations);
+    } else {
+        syncArapToMeshes();
+        refreshGaussianBoneTexture();
+    }
+
+    state.selectedKeyframeIndex = index;
+    const select = document.getElementById('keyframeSelect');
+    if (select) select.value = String(index);
+    syncSelectionToUI();
+    syncKeyframeUI();
+    rebuildAndRefreshSplineAnimation();
+    console.log(`Keyframe applied: ${kf.name}`);
+}
+
+function deleteKeyframe(index = state.selectedKeyframeIndex) {
+    if (index < 0 || index >= state.keyframes.length) return;
+    const [removed] = state.keyframes.splice(index, 1);
+    state.selectedKeyframeIndex = Math.min(index, state.keyframes.length - 1);
+    persistKeyframes();
+    renderKeyframeList();
+    rebuildAndRefreshSplineAnimation();
+    console.log(`Keyframe deleted: ${removed?.name ?? index}`);
+}
+
+function clearKeyframes() {
+    state.keyframes = [];
+    state.selectedKeyframeIndex = -1;
+    stopSplineAnimation();
+    state.splineAnimationCurveCache = null;
+    state.splineAnimationHandleIndices = [];
+    persistKeyframes();
+    renderKeyframeList();
+}
+
+function normalizeImportedKeyframes(payload) {
+    const rawKeyframes = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.keyframes)
+            ? payload.keyframes
+            : [];
+
+    return rawKeyframes.map((kf, idx) => ({
+        id: kf?.id || `${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 8)}`,
+        name: kf?.name || `Keyframe ${idx + 1}`,
+        createdAt: kf?.createdAt || new Date().toISOString(),
+        selectedBoneIndices: Array.isArray(kf?.selectedBoneIndices) ? kf.selectedBoneIndices : [],
+        fixedBoneIndices: Array.isArray(kf?.fixedBoneIndices) ? kf.fixedBoneIndices : [],
+        activeBoneIndex: Number.isInteger(kf?.activeBoneIndex) ? kf.activeBoneIndex : -1,
+        handleIndices: Array.isArray(kf?.handleIndices) ? kf.handleIndices : [],
+        handlePositions: Array.isArray(kf?.handlePositions) ? kf.handlePositions : [],
+        restPositions: Array.isArray(kf?.restPositions) ? kf.restPositions : [],
+        currentPositions: Array.isArray(kf?.currentPositions) ? kf.currentPositions : [],
+        rotations: Array.isArray(kf?.rotations) ? kf.rotations : [],
+        globalTransform: Array.isArray(kf?.globalTransform) ? kf.globalTransform : new THREE.Matrix4().identity().toArray(),
+    }));
+}
+
+function exportKeyframesToFile() {
+    const payload = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        sourceDataPath: state.activeDataPath || '',
+        keyframes: state.keyframes,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    a.href = url;
+    a.download = `skinning_keyframes_${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    console.log(`Keyframes exported: ${state.keyframes.length}`);
+}
+
+function triggerKeyframeImport() {
+    const input = document.getElementById('keyframeFileInput');
+    if (!input) return;
+    input.value = '';
+    input.click();
+}
+
+async function handleKeyframeFileImport(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const imported = normalizeImportedKeyframes(parsed);
+
+        if (!imported.length) {
+            throw new Error('키프레임 데이터가 없습니다.');
+        }
+
+        state.keyframes = imported;
+        state.selectedKeyframeIndex = 0;
+        stopSplineAnimation();
+        persistKeyframes();
+        renderKeyframeList();
+        rebuildAndRefreshSplineAnimation();
+        syncSplineAnimationUI();
+        console.log(`Keyframes imported: ${imported.length} from ${file.name}`);
+    } catch (error) {
+        console.error('Failed to import keyframes:', error);
+        alert(`키프레임 파일을 불러오지 못했습니다.\n${error?.message || error}`);
+    }
+}
+
+function getKeyframePositionMap(keyframe) {
+    const map = new Map();
+    if (!keyframe) return map;
+
+    for (const item of keyframe.handlePositions || []) {
+        if (Number.isInteger(item.index) && Array.isArray(item.position) && item.position.length >= 3) {
+            map.set(item.index, new THREE.Vector3().fromArray(item.position));
+        }
+    }
+
+    if (map.size === 0 && Array.isArray(keyframe.currentPositions)) {
+        for (const idx of keyframe.handleIndices || []) {
+            const pos = keyframe.currentPositions[idx];
+            if (Array.isArray(pos) && pos.length >= 3) {
+                map.set(idx, new THREE.Vector3().fromArray(pos));
+            }
+        }
+    }
+
+    return map;
+}
+
+function getTrackPointForKeyframe(keyframe, boneIndex) {
+    const positionMap = getKeyframePositionMap(keyframe);
+    const direct = positionMap.get(boneIndex);
+    if (direct) return direct.clone();
+
+    const fallback = Array.isArray(keyframe?.currentPositions) ? keyframe.currentPositions[boneIndex] : null;
+    if (Array.isArray(fallback) && fallback.length >= 3) return new THREE.Vector3().fromArray(fallback);
+
+    return state.arap?.restPositions?.[boneIndex]?.clone?.() ?? new THREE.Vector3();
+}
+
+function rebuildSplineAnimationCache() {
+    const keyframes = state.keyframes;
+    if (!keyframes || keyframes.length < 2 || !state.arap) {
+        state.splineAnimationCurveCache = null;
+        state.splineAnimationHandleIndices = [];
+        return null;
+    }
+
+    const handleSet = new Set();
+    for (const kf of keyframes) {
+        for (const idx of (kf.handleIndices || [])) {
+            if (Number.isInteger(idx)) handleSet.add(idx);
+        }
+    }
+
+    const handleIndices = [...handleSet].sort((a, b) => a - b);
+    const tracks = new Map();
+
+    for (const boneIndex of handleIndices) {
+        const points = keyframes.map((kf) => getTrackPointForKeyframe(kf, boneIndex));
+        if (points.length >= 3) {
+            tracks.set(boneIndex, new THREE.CatmullRomCurve3(points, true, 'centripetal', 0.5));
+        } else if (points.length === 2) {
+            tracks.set(boneIndex, {
+                getPoint: (t, target = new THREE.Vector3()) => target.lerpVectors(points[0], points[1], t),
+            });
+        }
+    }
+
+    state.splineAnimationCurveCache = tracks;
+    state.splineAnimationHandleIndices = handleIndices;
+    return tracks;
+}
+
+function applySplineAnimationPhase(phase) {
+    if (!state.arap || !state.splineAnimationCurveCache || state.splineAnimationHandleIndices.length === 0) return;
+
+    const handles = new Map();
+    const normalized = ((phase % 1) + 1) % 1;
+
+    for (const boneIndex of state.splineAnimationHandleIndices) {
+        const curve = state.splineAnimationCurveCache.get(boneIndex);
+        if (!curve) continue;
+        const target = new THREE.Vector3();
+        curve.getPoint(normalized, target);
+        handles.set(boneIndex, target);
+        if (state.arap.currentPositions[boneIndex]) {
+            state.arap.currentPositions[boneIndex].copy(target);
+        }
+    }
+
+    if (handles.size > 0) {
+        solveArap(handles, state.splineAnimationIterations);
+    }
+}
+
+function startSplineAnimation() {
+    if (!state.keyframes || state.keyframes.length < 2) {
+        console.warn('키프레임이 최소 2개는 있어야 Catmull-Rom 애니메이션을 재생할 수 있습니다.');
+        return;
+    }
+
+    rebuildSplineAnimationCache();
+    if (!state.splineAnimationCurveCache || state.splineAnimationHandleIndices.length === 0) {
+        console.warn('애니메이션용 handle을 만들 수 없습니다.');
+        return;
+    }
+
+    const startIdx = state.selectedKeyframeIndex >= 0 ? state.selectedKeyframeIndex : 0;
+    state.splineAnimationPhaseOffset = startIdx / Math.max(1, state.keyframes.length);
+    state.splineAnimationTime = 0;
+    state.splineAnimationPlaying = true;
+    syncSplineAnimationUI();
+}
+
+function stopSplineAnimation() {
+    state.splineAnimationPlaying = false;
+    syncSplineAnimationUI();
+}
+
+function toggleSplineAnimation() {
+    if (state.splineAnimationPlaying) stopSplineAnimation();
+    else startSplineAnimation();
+}
+
+function updateSplineAnimation(delta) {
+    if (!state.splineAnimationPlaying) return;
+    if (!state.splineAnimationCurveCache || state.splineAnimationHandleIndices.length === 0) {
+        rebuildSplineAnimationCache();
+        if (!state.splineAnimationCurveCache || state.splineAnimationHandleIndices.length === 0) {
+            stopSplineAnimation();
+            return;
+        }
+    }
+
+    const speed = Math.max(0.01, state.splineAnimationSpeed || 1.0);
+    state.splineAnimationTime += delta * speed;
+    const phase = (state.splineAnimationPhaseOffset + state.splineAnimationTime) % 1;
+    applySplineAnimationPhase(phase);
+}
+
+function syncSplineAnimationUI() {
+    const status = document.getElementById('splineAnimStatus');
+    const startBtn = document.getElementById('startSplineAnimBtn');
+    const stopBtn = document.getElementById('stopSplineAnimBtn');
+    const rebuildBtn = document.getElementById('rebuildSplineAnimBtn');
+    const ready = !!state.splineAnimationCurveCache && state.splineAnimationHandleIndices.length > 0;
+
+    if (status) {
+        status.textContent = state.splineAnimationPlaying
+            ? `재생 중 · handles ${state.splineAnimationHandleIndices.length}`
+            : ready ? `대기 중 · handles ${state.splineAnimationHandleIndices.length}` : '준비되지 않음';
+    }
+    if (startBtn) startBtn.disabled = !ready && state.keyframes.length < 2;
+    if (stopBtn) stopBtn.disabled = !state.splineAnimationPlaying;
+    if (rebuildBtn) rebuildBtn.disabled = state.keyframes.length < 2;
+}
+
+function rebuildAndRefreshSplineAnimation() {
+    rebuildSplineAnimationCache();
+    syncSplineAnimationUI();
+}
+
+function setSplineAnimationSpeed() {
+    const value = parseFloat(document.getElementById('splineAnimSpeed')?.value || '1');
+    state.splineAnimationSpeed = Number.isFinite(value) ? value : 1.0;
+    const label = document.getElementById('splineAnimSpeedValue');
+    if (label) label.textContent = state.splineAnimationSpeed.toFixed(2) + '×';
+}
+
+window.setSplineAnimationSpeed = setSplineAnimationSpeed;
+window.startSplineAnimation = startSplineAnimation;
+window.stopSplineAnimation = stopSplineAnimation;
+window.toggleSplineAnimation = toggleSplineAnimation;
+window.rebuildSplineAnimation = rebuildAndRefreshSplineAnimation;
+window.exportKeyframesToFile = exportKeyframesToFile;
+window.importKeyframesFromFile = triggerKeyframeImport;
+window.handleKeyframeFileImport = handleKeyframeFileImport;
+
+window.registerKeyframe = registerKeyframe;
+window.applySelectedKeyframe = () => applyKeyframe();
+window.deleteSelectedKeyframe = () => deleteKeyframe();
+window.clearKeyframes = clearKeyframes;
 
 function visualizeSkinningPoints() {
     // Clear previous bone visualizations
@@ -408,6 +878,7 @@ window.resetRig = function() {
     state.selectedBoneIndices = [];
     state.activeBoneIndex = -1;
     state.fixedBoneIndices.clear();
+    stopSplineAnimation();
     if (document.getElementById('selectedBone')) document.getElementById('selectedBone').value = '0';
     if (document.getElementById('selectedBoneValue')) document.getElementById('selectedBoneValue').textContent = 'none';
 
@@ -415,6 +886,7 @@ window.resetRig = function() {
     syncArapToMeshes();
     syncSelectionToUI();
     refreshGaussianBoneTexture();
+    syncSplineAnimationUI();
 
     console.log('Rig reset to rest pose');
 };
@@ -725,6 +1197,8 @@ function onContextMenu(event) {
 
 function animate() {
     requestAnimationFrame(animate);
+    const delta = state.frameClock.getDelta();
+    updateSplineAnimation(delta);
     state.controls?.update();
     if (state.viewer && typeof state.viewer.update === 'function') {
         try { state.viewer.update(); } catch (e) {}
