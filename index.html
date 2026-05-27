@@ -6,6 +6,23 @@
     <title>Hybrid 2DGS Holo-Card RTT</title>
     <link rel="stylesheet" href="./style.css">
     <link rel="icon" type="image/svg+xml" href="/warpable-GS/favicon.svg">
+    <script>
+      // SharedArrayBuffer 비활성화를 위한 전역 설정
+      if (window.crossOriginIsolated === undefined) {
+        Object.defineProperty(window, 'crossOriginIsolated', {
+          value: false,
+          writable: false,
+          configurable: false
+        });
+      }
+      // DropInViewer 글로벌 옵션 설정
+      if (!window.GSViewerDefaults) {
+        window.GSViewerDefaults = {
+          sharedMemoryForWorkers: false,
+          gpuAcceleratedSort: false
+        };
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>
