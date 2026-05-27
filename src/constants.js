@@ -70,12 +70,12 @@ export const RENDER_TARGET = {
 export const CAMERA = {
     MAIN_FOV: 50,
     MAIN_NEAR: 0.1,
-    MAIN_FAR: 1000,
+    MAIN_FAR: 3000,
     MAIN_POS: [0, 150, 150],
     MAIN_LOOK_AT: [0, 50, 0],
     SPLAT_FOV: 45,
     SPLAT_NEAR: 0.1,
-    SPLAT_FAR: 1000,
+    SPLAT_FAR: 3000,
 };
 
 /**

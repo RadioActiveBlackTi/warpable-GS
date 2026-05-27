@@ -8,6 +8,13 @@
   </head>
   <body>
     <div id="app"></div>
+    <div style="position:fixed;left:16px;top:16px;z-index:10000;padding:10px 12px;border-radius:12px;background:rgba(0,0,0,0.55);color:#fff;font:13px/1.4 system-ui,sans-serif;backdrop-filter:blur(6px);">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;">
+        <input id="camera-mode-toggle" type="checkbox" />
+        <span>ego mode</span>
+      </label>
+      <div style="margin-top:4px;opacity:0.75;font-size:11px;">off = orbit / on = ego</div>
+    </div>
     <script type="module" src="src/main.js"></script>
   </body>
 </html>

@@ -1,16 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { HoloPortal } from './holoPortal.js';
-import { VolumetricARAP } from './arap.js';
-import { DropInViewer } from '@mkkellogg/gaussian-splats-3d';
-
-// 모듈 임포트
-import { computeSkinningAttributes } from './mathUtils.js';
-import { createTestMeshLBSShader } from './shaders.js';
-import {
-    ARAP, BONE_TEXTURE, CAMERA, LIGHTS, TEST_MESH,
-    DEBUG_BONES_MESH, PORTAL, RBF_WEIGHTS
-} from './constants.js';
+import { CAMERA, PORTAL } from './constants.js';
 
 // =========================================================================
 // 메인 어플리케이션 초기화
@@ -24,8 +15,23 @@ async function initHoloPortal() {
     app.appendChild(renderer.domElement);
 
     const mainScene = new THREE.Scene();
-    mainScene.background = new THREE.Color(0x333344);
+    
+    // ====== 배경 생성 (따뜻한 톤 그라데이션) ======
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    gradient.addColorStop(0, '#e8d5c4');    // 위: 따뜻한 베이지
+    gradient.addColorStop(0.5, '#c9b8a8');  // 중간: 따뜻한 회색
+    gradient.addColorStop(1, '#8b7d72');    // 아래: 따뜻한 갈색
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    const gradientTexture = new THREE.CanvasTexture(canvas);
+    mainScene.background = gradientTexture;
 
+    // ====== 카메라 세팅 ======
     const mainCamera = new THREE.PerspectiveCamera(
         CAMERA.MAIN_FOV,
         window.innerWidth / window.innerHeight,
@@ -39,97 +45,148 @@ async function initHoloPortal() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
 
-    // 호로포탈 생성
-    const holoPortal = new HoloPortal(mainScene, mainCamera, renderer, 'nubjuk_face_rg.ply', {
+    // ====== Orbit / Ego 카메라 모드 로직 ======
+    const cameraModeToggle = document.getElementById('camera-mode-toggle');
+    let cameraMode = cameraModeToggle?.checked ? 'ego' : 'orbit';
+
+    mainCamera.rotation.order = 'YXZ';
+
+    const egoState = { yaw: 0, pitch: 0 };
+    const egoForward = new THREE.Vector3();
+    const egoRight = new THREE.Vector3();
+    const egoMove = new THREE.Vector3();
+    const egoLookDir = new THREE.Vector3();
+    const egoDrag = { active: false, lastX: 0, lastY: 0 };
+
+    const syncEgoAnglesFromOrbit = () => {
+        const dir = new THREE.Vector3().subVectors(controls.target, mainCamera.position).normalize();
+        egoState.yaw = Math.atan2(dir.x, dir.z);
+        egoState.pitch = Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1));
+    };
+
+    syncEgoAnglesFromOrbit();
+
+    const updateEgoCameraRotation = () => {
+        mainCamera.rotation.set(egoState.pitch, egoState.yaw, 0, 'YXZ');
+        egoLookDir.set(0, 0, -1).applyQuaternion(mainCamera.quaternion).normalize();
+        controls.target.copy(mainCamera.position).add(egoLookDir);
+    };
+
+    const setCameraMode = (mode) => {
+        cameraMode = mode;
+        controls.enabled = mode === 'orbit';
+        controls.enableZoom = mode === 'orbit';
+        controls.enableRotate = mode === 'orbit';
+        controls.enablePan = mode === 'orbit';
+
+        if (mode === 'ego') {
+            syncEgoAnglesFromOrbit();
+            updateEgoCameraRotation();
+            renderer.domElement.style.cursor = 'grab';
+        } else {
+            egoDrag.active = false;
+            renderer.domElement.style.cursor = '';
+            mainCamera.getWorldDirection(egoLookDir);
+            controls.target.copy(mainCamera.position).add(egoLookDir);
+            controls.update();
+        }
+    };
+
+    if (cameraModeToggle) {
+        cameraModeToggle.addEventListener('change', () => {
+            setCameraMode(cameraModeToggle.checked ? 'ego' : 'orbit');
+        });
+    }
+
+    window.addEventListener('mousedown', (e) => {
+        if (cameraMode !== 'ego') return;
+        if (e.button !== 0) return;
+        egoDrag.active = true;
+        egoDrag.lastX = e.clientX;
+        egoDrag.lastY = e.clientY;
+        renderer.domElement.style.cursor = 'grabbing';
+    });
+
+    window.addEventListener('mouseup', () => {
+        egoDrag.active = false;
+        if (cameraMode === 'ego') renderer.domElement.style.cursor = 'grab';
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (cameraMode !== 'ego' || !egoDrag.active) return;
+        const dx = e.clientX - egoDrag.lastX;
+        const dy = e.clientY - egoDrag.lastY;
+        egoDrag.lastX = e.clientX;
+        egoDrag.lastY = e.clientY;
+
+        const sensitivity = 0.005;
+        egoState.yaw -= dx * sensitivity;
+        egoState.pitch -= dy * sensitivity;
+        egoState.pitch = THREE.MathUtils.clamp(egoState.pitch, -Math.PI / 2 + 0.05, Math.PI / 2 - 0.05);
+        updateEgoCameraRotation();
+    });
+
+    // ====== WASD 이동 ======
+    const keyState = { w: false, a: false, s: false, d: false, shift: false };
+    window.addEventListener('keydown', (e) => { const key = e.key.toLowerCase(); if (key in keyState) keyState[key] = true; });
+    window.addEventListener('keyup', (e) => { const key = e.key.toLowerCase(); if (key in keyState) keyState[key] = false; });
+
+    const moveEgoCamera = (deltaTime) => {
+        if (cameraMode !== 'ego') return;
+        const moveSpeed = keyState.shift ? 220 : 120;
+        const step = moveSpeed * deltaTime;
+
+        mainCamera.getWorldDirection(egoForward).normalize();
+        egoRight.crossVectors(egoForward, mainCamera.up).normalize();
+
+        egoMove.set(0, 0, 0);
+        if (keyState.w) egoMove.add(egoForward);
+        if (keyState.s) egoMove.sub(egoForward);
+        if (keyState.d) egoMove.add(egoRight);
+        if (keyState.a) egoMove.sub(egoRight);
+
+        if (egoMove.lengthSq() > 0) {
+            egoMove.normalize().multiplyScalar(step);
+            mainCamera.position.add(egoMove);
+            updateEgoCameraRotation();
+        }
+    };
+
+    // =========================================================================
+    // ✨ 핵심: 스마트해진 HoloPortal 인스턴스화
+    // =========================================================================
+    const holoPortal = new HoloPortal(mainScene, mainCamera, renderer, [
+        {
+            plyPath: '/nubjuk_face_rg.ply',
+            riggingDataPath: '/nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json',
+            animationDataPath: '/nubjuk_anim_1.json',
+            rotation: {x: 0, y: Math.PI, z: Math.PI},
+            position: {x: 0, y: -25, z: 0},
+            scale: 2.0,
+        }
+    ], {
         cylinderRadius: PORTAL.CYLINDER_RADIUS,
         cylinderHeight: PORTAL.CYLINDER_HEIGHT,
     });
 
-    // ARAP 솔버 초기화
-    const arapGrid = new VolumetricARAP();
+    holoPortal.setPosition(0, 60, 0);
 
-    // ====== 디버그 뼈 메쉬 시각화 ======
-    const debugBones = [];
-    const sphereGeo = new THREE.SphereGeometry(
-        DEBUG_BONES_MESH.RADIUS,
-        DEBUG_BONES_MESH.WIDTH_SEGMENTS,
-        DEBUG_BONES_MESH.HEIGHT_SEGMENTS
-    );
-    const sphereMat = new THREE.MeshBasicMaterial({
-        color: DEBUG_BONES_MESH.COLOR,
-        depthTest: DEBUG_BONES_MESH.DEPTH_TEST
-    });
-    for (let i = 0; i < arapGrid.numBones; i++) {
-        const mesh = new THREE.Mesh(sphereGeo, sphereMat);
-        mainScene.add(mesh);
-        debugBones.push(mesh);
+    // 스플랫 및 내부 씬 파이프라인 전면 로드 실행 (await로 안전하게 대기)
+    try {
+        await holoPortal.loadSplat();
+    } catch (e) {
+        console.error('스플랫 로드 실패:', e);
     }
 
-    // ====== 뼈 텍스처 생성 ======
-    const boneData = new Float32Array(BONE_TEXTURE.WIDTH * BONE_TEXTURE.HEIGHT * 4);
-    // 항등 행렬로 초기화 (column-major)
-    for (let i = 0; i < arapGrid.numBones; i++) {
-        const offset = i * 16;
-        for (let k = 0; k < 16; k++) {
-            boneData[offset + k] = (k === 0 || k === 5 || k === 10 || k === 15) ? 1 : 0;
-        }
-    }
-    const boneTexture = new THREE.DataTexture(
-        boneData,
-        BONE_TEXTURE.WIDTH,
-        BONE_TEXTURE.HEIGHT,
-        THREE.RGBAFormat,
-        THREE.FloatType
-    );
-    boneTexture.minFilter = THREE.NearestFilter;
-    boneTexture.magFilter = THREE.NearestFilter;
-    boneTexture.needsUpdate = true;
+    // 전역 디버깅용 노출
+    window.holoPortal = holoPortal;
 
-    // ====== 테스트 메쉬(실린더) 생성 ======
-    const testGeo = new THREE.CylinderGeometry(
-        TEST_MESH.RADIUS_TOP,
-        TEST_MESH.RADIUS_BOTTOM,
-        TEST_MESH.HEIGHT,
-        TEST_MESH.RADIAL_SEGMENTS,
-        TEST_MESH.HEIGHT_SEGMENTS
-    );
-    testGeo.translate(0, TEST_MESH.INITIAL_Y, 0);
-
-    // RBF 기반 스킨 가중치 계산
-    const { skinIndices, skinWeights } = computeSkinningAttributes(
-        testGeo,
-        arapGrid.restPositions,
-        RBF_WEIGHTS.TEST_MESH_SIGMA,
-        RBF_WEIGHTS.TOP_K_BONES
-    );
-    testGeo.setAttribute('skinIndex', skinIndices);
-    testGeo.setAttribute('skinWeight', skinWeights);
-
-    // LBS 쉐이더 설정
-    const testShaderConfig = createTestMeshLBSShader(BONE_TEXTURE.WIDTH, BONE_TEXTURE.HEIGHT);
-    const testMat = new THREE.ShaderMaterial({
-        uniforms: {
-            ...testShaderConfig.uniforms,
-            boneTexture: { value: boneTexture }
-        },
-        vertexShader: testShaderConfig.vertexShader,
-        fragmentShader: testShaderConfig.fragmentShader,
-        wireframe: true,
-        transparent: true,
-        depthTest: false,
-        side: THREE.DoubleSide
-    });
-
-    const testMesh = new THREE.Mesh(testGeo, testMat);
-    testMesh.frustumCulled = false;
-    mainScene.add(testMesh);
-
-    // ====== UI 세팅 ======
+    // ====== UI 세팅 (진폭 슬라이더) ======
     const ui = document.createElement('div');
     ui.style.cssText = 'position:fixed;right:16px;top:16px;z-index:9999;width:220px;padding:12px;border-radius:12px;background:rgba(0,0,0,0.65);color:#fff;font:13px/1.4 system-ui,sans-serif;';
     
     const ampLabel = document.createElement('div');
-    ampLabel.textContent = '물방울 Z 진폭';
+    ampLabel.textContent = '포탈 표면 물결 진폭';
     const ampValue = document.createElement('div');
     ampValue.textContent = '2.0';
     const ampSlider = document.createElement('input');
@@ -148,30 +205,77 @@ async function initHoloPortal() {
     document.body.appendChild(ui);
     holoPortal.setBendAmount(2.0);
 
-    // ARAP 데이터 호로포탈에 전달
-    holoPortal.setARAPData(arapGrid.restPositions, boneTexture, BONE_TEXTURE.WIDTH, BONE_TEXTURE.HEIGHT);
-
-    // 가우시안 스플랫 로더 생성 및 로드
-    const viewer = new DropInViewer({
-        sphericalHarmonicsDegree: 2
-    });
-    try {
-        await holoPortal.loadSplat(viewer);
-    } catch (e) {
-        console.error('Failed to load splat:', e);
-    }
-
-    // 디버깅용 전역 접근
-    window.holoPortal = holoPortal;
-    window.arapGrid = arapGrid;
-
-    // ====== 조명 설정 ======
-    const light1 = new THREE.DirectionalLight(LIGHTS.LIGHT1_COLOR, LIGHTS.LIGHT1_INTENSITY);
-    light1.position.set(...LIGHTS.LIGHT1_POS);
-    const light2 = new THREE.DirectionalLight(LIGHTS.LIGHT2_COLOR, LIGHTS.LIGHT2_INTENSITY);
-    light2.position.set(...LIGHTS.LIGHT2_POS);
-    const ambientLight = new THREE.AmbientLight(LIGHTS.AMBIENT_COLOR, LIGHTS.AMBIENT_INTENSITY);
+    // =========================================================================
+    // 환경, 조명, 인테리어 소품 세팅 (기존 코드 유지)
+    // =========================================================================
+    const light1 = new THREE.DirectionalLight(0xffd9a8, 2.5);
+    light1.position.set(150, 200, 100);
+    light1.castShadow = true;
+    
+    const light2 = new THREE.DirectionalLight(0xb8d4ff, 1.5);
+    light2.position.set(-150, 180, -150);
+    
+    const ambientLight = new THREE.AmbientLight(0xf5e6d3, 0.9);
     mainScene.add(light1, light2, ambientLight);
+
+    // 바닥
+    const floorGeo = new THREE.PlaneGeometry(1200, 1200);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0xa89080, roughness: 0.7 });
+    const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+    floorMesh.rotation.x = -Math.PI / 2;
+    floorMesh.position.y = -150;
+    floorMesh.receiveShadow = true;
+    mainScene.add(floorMesh);
+
+    // 테이블 탑
+    const tableTopMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(800, 8, 600),
+        new THREE.MeshStandardMaterial({ color: 0x8b6f47, roughness: 0.6 })
+    );
+    tableTopMesh.position.y = -20;
+    tableTopMesh.castShadow = true;
+    tableTopMesh.receiveShadow = true;
+    mainScene.add(tableTopMesh);
+
+    // 테이블 다리
+    const legGeo = new THREE.BoxGeometry(18, 130, 18);
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x6b5436, roughness: 0.7 });
+    [[-360, -85, -260], [360, -85, -260], [-360, -85, 260], [360, -85, 260]].forEach(pos => {
+        const legMesh = new THREE.Mesh(legGeo, legMat);
+        legMesh.position.set(...pos);
+        legMesh.castShadow = true;
+        legMesh.receiveShadow = true;
+        mainScene.add(legMesh);
+    });
+
+
+    // 테이블 위 소품들
+    const addProp = (geo, mat, pos, rotZ = 0) => {
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(...pos);
+        mesh.rotation.z = rotZ;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mainScene.add(mesh);
+    };
+
+    const bookGeo = new THREE.BoxGeometry(45, 12, 30);
+    addProp(bookGeo, new THREE.MeshStandardMaterial({ color: 0xc1402d, roughness: 0.7 }), [-250, 0, -120], 0.15);
+    addProp(bookGeo, new THREE.MeshStandardMaterial({ color: 0x4a5f8f, roughness: 0.7 }), [-250, 12, -80], -0.1);
+    addProp(new THREE.BoxGeometry(50, 10, 40), new THREE.MeshStandardMaterial({ color: 0x8b7d6b, roughness: 0.8 }), [-120, 0, 180], 0.2);
+    addProp(new THREE.CylinderGeometry(2.5, 2.5, 25, 8), new THREE.MeshStandardMaterial({ color: 0x3d3d3d, roughness: 0.4 }), [-70, 12, 190], 0.3);
+    addProp(new THREE.CylinderGeometry(20, 20, 30, 32), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 }), [280, 8, 160]);
+    addProp(new THREE.CylinderGeometry(35, 35, 2, 32), new THREE.MeshStandardMaterial({ color: 0xf5f5dc, roughness: 0.5 }), [300, 0, -130]);
+    addProp(new THREE.BoxGeometry(4, 4, 20), new THREE.MeshStandardMaterial({ color: 0xc0a080, roughness: 0.4, metalness: 0.6 }), [200, 5, -180], 0.4);
+
+    // 포탈 받침대
+    const cupPad = new THREE.Mesh(
+        new THREE.CylinderGeometry(90, 90, 3, 32),
+        new THREE.MeshStandardMaterial({ color: 0xb8a89a, roughness: 0.8 })
+    );
+    cupPad.position.y = -17;
+    cupPad.receiveShadow = true;
+    mainScene.add(cupPad);
 
     // ====== 윈도우 리사이징 ======
     window.addEventListener('resize', () => {
@@ -181,44 +285,22 @@ async function initHoloPortal() {
         holoPortal.handleResize();
     });
 
-    // ====== 애니메이션 루프 ======
+    // =========================================================================
+    // ✨ 핵심: 엄청나게 간결해진 애니메이션 루프
+    // =========================================================================
     const clock = new THREE.Clock();
 
     function animate() {
         requestAnimationFrame(animate);
         const delta = clock.getDelta();
-        const elapsed = clock.getElapsedTime();
-        controls.update();
-
-        // 실시간 상단 핸들 제어 (애니메이션)
-        const waveX = Math.sin(elapsed * 2.5) * 12.0;
-        const waveZ = Math.cos(elapsed * 2.0) * 8.0;
-
-        // 최하단 층: 고정
-        for (let i = 0; i < 4; i++) {
-            arapGrid.setHandle(i, arapGrid.restPositions[i]);
-        }
-        // 최상단 층: 애니메이션
-        for (let i = 16; i < 20; i++) {
-            const target = arapGrid.restPositions[i].clone();
-            target.x += waveX;
-            target.z += waveZ;
-            arapGrid.setHandle(i, target);
+        
+        if (cameraMode === 'ego') {
+            moveEgoCamera(delta);
+        } else {
+            controls.update();
         }
 
-        // ARAP 솔버 실행
-        arapGrid.solve(ARAP.ITERATIONS);
-
-        // 뼈 텍스처 업데이트
-        arapGrid.updateBoneTextureData(boneData);
-        boneTexture.needsUpdate = true;
-
-        // 디버그 뼈 메쉬 위치 업데이트
-        for (let i = 0; i < debugBones.length; i++) {
-            debugBones[i].position.copy(arapGrid.currentPositions[i]);
-        }
-
-        // 호로포탈 업데이트 및 렌더
+        // 호로포탈이 자체적으로 ARAP, 스킨닝 업데이트, 키프레임 처리, 렌더링을 모두 수행합니다!
         holoPortal.update(delta);
         holoPortal.render();
     }
@@ -226,5 +308,4 @@ async function initHoloPortal() {
     animate();
 }
 
-// 시작
 window.addEventListener('DOMContentLoaded', initHoloPortal);
