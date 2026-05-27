@@ -5,6 +5,8 @@
 
 A Three.js + Vite prototype that renders a warpable scene that may contain both mesh and Gaussian Splats.
 
+You may preview the running scene in [https://radioactiveblackti.github.io/warpable-GS/]. Note that it is quite slow on Github Pages.
+
 ## Requirements
 
 - Linux, macOS, or Windows
