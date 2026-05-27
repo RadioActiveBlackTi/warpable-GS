@@ -12,12 +12,20 @@ export class HoloPortal {
         this.mainScene = mainScene;
         this.mainCamera = mainCamera;
         this.renderer = renderer;
+        this.objectSceneMap = new WeakMap();
+
+        this.cylinderRadius = options.cylinderRadius ?? PORTAL.CYLINDER_RADIUS;
+        this.cylinderHeight = options.cylinderHeight ?? PORTAL.CYLINDER_HEIGHT;
+        this.splatScale = options.splatScale ?? PORTAL.SPLAT_SCALE;
+        this.color = options.color ?? 0x444455;
+        this.portalPassMargin = options.portalPassMargin ?? 2.0;
         
         if (typeof plyPath === 'string') {
             this.contents = [{
                 plyPath: plyPath,
                 riggingDataPath: options.riggingDataPath || null,
                 animationDataPath: options.animationDataPath || null,
+                scene: options.scene || 'underwater',
                 position: options.position || { x: 0, y: this.cylinderHeight / 2, z: 0 },
                 rotation: options.rotation || { x: 0, y: 0, z: 0 },
                 scale: options.scale || 1.0,
@@ -29,11 +37,6 @@ export class HoloPortal {
         }
 
         this.contentData = new Map();
-        this.cylinderRadius = options.cylinderRadius ?? PORTAL.CYLINDER_RADIUS;
-        this.cylinderHeight = options.cylinderHeight ?? PORTAL.CYLINDER_HEIGHT;
-        this.splatScale = options.splatScale ?? PORTAL.SPLAT_SCALE;
-        this.color = options.color ?? 0x444455;
-        this.portalPassMargin = options.portalPassMargin ?? 2.0;
 
         // RTT 세팅
         this.splatScene = new THREE.Scene();
@@ -122,6 +125,7 @@ export class HoloPortal {
         handleMesh.position.y = 5;
         handleMesh.position.x = this.cylinderRadius;
         this.cupGroup.add(handleMesh);
+        this.tagObjectScene(this.cupGroup, 'main');
 
         // 수중 환경
         this.underwaterLidMesh = this.lidMesh.clone();
@@ -140,12 +144,15 @@ export class HoloPortal {
         this.underwaterLidMesh.material.toneMapped = false;
         this.underwaterLidMesh.visible = false;
         this.underwaterLidMesh.renderOrder = 999;
+        this.tagObjectScene(this.underwaterLidMesh, 'underwater');
         this.splatScene.add(this.underwaterLidMesh);
 
         this.underwaterPortalLight = new THREE.PointLight(0x9fefff, 6.0, 500, 1.5);
         this.underwaterPortalUpLight = new THREE.PointLight(0xe8ffff, 8.0, 650, 2.0);
         this.underwaterPortalLight.visible = false;
         this.underwaterPortalUpLight.visible = false;
+        this.tagObjectScene(this.underwaterPortalLight, 'underwater');
+        this.tagObjectScene(this.underwaterPortalUpLight, 'underwater');
         this.splatScene.add(this.underwaterPortalLight, this.underwaterPortalUpLight);
 
         this._tmpPortalPos = new THREE.Vector3();
@@ -183,6 +190,25 @@ export class HoloPortal {
         this.arap = null;
         this.restPositions = null;
         this.boneTexture = null;
+    }
+
+    tagObjectScene(object, sceneType) {
+        if (!object) return object;
+        object.traverse?.((child) => {
+            child.userData = child.userData || {};
+            child.userData.portalScene = sceneType;
+            this.objectSceneMap.set(child, sceneType);
+        });
+        return object;
+    }
+
+    getObjectSceneType(object) {
+        if (!object) return null;
+        return object.userData?.portalScene || this.objectSceneMap.get(object) || null;
+    }
+
+    getContentSceneType(content) {
+        return content?.scene || content?.sceneType || 'underwater';
     }
 
     // ==========================================================
@@ -317,17 +343,21 @@ export class HoloPortal {
         console.log(`🚀 가우시안 스플랫 로드 시작...`);
         for (let i = 0; i < this.contents.length; i++) {
             const content = this.contents[i];
+            const sceneType = this.getContentSceneType(content);
             try {
                 const viewer = new DropInViewer({
                     gpuAcceleratedSort: false,
                     sharedMemoryForWorkers: false,
                     sphericalHarmonicsDegree: 2,
                 });
-                this.splatScene.add(viewer);
+                this.tagObjectScene(viewer, sceneType);
+                const targetScene = sceneType === 'main' ? this.mainScene : this.splatScene;
+                targetScene.add(viewer);
 
                 if (!this.contentData.has(i)) this.contentData.set(i, {});
                 const contentData = this.contentData.get(i);
                 contentData.viewer = viewer;
+                contentData.sceneType = sceneType;
 
                 await viewer.addSplatScene(content.plyPath, {
                     progressiveLoad: false,
@@ -702,6 +732,7 @@ export class HoloPortal {
             if (!response.ok) return;
 
             this.moonViewer = new DropInViewer();
+            this.tagObjectScene(this.moonViewer, 'underwater');
             this.splatScene.add(this.moonViewer);
 
             await this.moonViewer.addSplatScene('/moon1.ply', {

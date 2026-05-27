@@ -31,6 +31,15 @@ async function initHoloPortal() {
     const gradientTexture = new THREE.CanvasTexture(canvas);
     mainScene.background = gradientTexture;
 
+    const tagSceneObject = (object, sceneType) => {
+        if (!object) return object;
+        object.traverse?.((child) => {
+            child.userData = child.userData || {};
+            child.userData.portalScene = sceneType;
+        });
+        return object;
+    };
+
     // ====== 카메라 세팅 ======
     const mainCamera = new THREE.PerspectiveCamera(
         CAMERA.MAIN_FOV,
@@ -160,6 +169,7 @@ async function initHoloPortal() {
             plyPath: '/nubjuk_face_rg.ply',
             riggingDataPath: '/nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json',
             animationDataPath: '/nubjuk_anim_1.json',
+            scene: 'underwater',
             rotation: {x: 0, y: Math.PI, z: Math.PI},
             position: {x: 0, y: -25, z: 0},
             scale: 2.0,
@@ -211,11 +221,14 @@ async function initHoloPortal() {
     const light1 = new THREE.DirectionalLight(0xffd9a8, 2.5);
     light1.position.set(150, 200, 100);
     light1.castShadow = true;
+    tagSceneObject(light1, 'main');
     
     const light2 = new THREE.DirectionalLight(0xb8d4ff, 1.5);
     light2.position.set(-150, 180, -150);
+    tagSceneObject(light2, 'main');
     
     const ambientLight = new THREE.AmbientLight(0xf5e6d3, 0.9);
+    tagSceneObject(ambientLight, 'main');
     mainScene.add(light1, light2, ambientLight);
 
     // 바닥
@@ -225,6 +238,7 @@ async function initHoloPortal() {
     floorMesh.rotation.x = -Math.PI / 2;
     floorMesh.position.y = -150;
     floorMesh.receiveShadow = true;
+    tagSceneObject(floorMesh, 'main');
     mainScene.add(floorMesh);
 
     // 테이블 탑
@@ -235,6 +249,7 @@ async function initHoloPortal() {
     tableTopMesh.position.y = -20;
     tableTopMesh.castShadow = true;
     tableTopMesh.receiveShadow = true;
+    tagSceneObject(tableTopMesh, 'main');
     mainScene.add(tableTopMesh);
 
     // 테이블 다리
@@ -245,6 +260,7 @@ async function initHoloPortal() {
         legMesh.position.set(...pos);
         legMesh.castShadow = true;
         legMesh.receiveShadow = true;
+        tagSceneObject(legMesh, 'main');
         mainScene.add(legMesh);
     });
 
@@ -256,6 +272,7 @@ async function initHoloPortal() {
         mesh.rotation.z = rotZ;
         mesh.castShadow = true;
         mesh.receiveShadow = true;
+        tagSceneObject(mesh, 'main');
         mainScene.add(mesh);
     };
 
@@ -275,6 +292,7 @@ async function initHoloPortal() {
     );
     cupPad.position.y = -17;
     cupPad.receiveShadow = true;
+    tagSceneObject(cupPad, 'main');
     mainScene.add(cupPad);
 
     // ====== 윈도우 리사이징 ======
