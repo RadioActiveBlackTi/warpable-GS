@@ -728,14 +728,15 @@ export class HoloPortal {
 
     async loadMoonSplat() {
         try {
-            const response = await fetch('/moon1.ply', { method: 'HEAD' });
+            const moonPath = new URL('/warpable-GS/moon1.ply', window.location.origin).href;
+            const response = await fetch(moonPath, { method: 'HEAD' });
             if (!response.ok) return;
 
             this.moonViewer = new DropInViewer();
             this.tagObjectScene(this.moonViewer, 'underwater');
             this.splatScene.add(this.moonViewer);
 
-            await this.moonViewer.addSplatScene('/moon1.ply', {
+            await this.moonViewer.addSplatScene(moonPath, {
                 progressiveLoad: false,
                 position: [0, 0, 0],
                 scale: [100, 100, 100],

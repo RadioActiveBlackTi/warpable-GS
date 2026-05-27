@@ -24,5 +24,12 @@ export default defineConfig({
         skinning: './skinning_demo.html'
       }
     }
+  },
+  server: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Resource-Policy': 'cross-origin'
+    }
   }
 });
