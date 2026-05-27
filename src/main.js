@@ -173,7 +173,14 @@ async function initHoloPortal() {
             rotation: {x: 0, y: Math.PI, z: Math.PI},
             position: {x: 0, y: -25, z: 0},
             scale: 2.0,
-        }
+            },
+            {
+                plyPath: new URL('/warpable-GS/moon1.ply', window.location.origin).href,
+                scene: 'underwater',
+                rotation: {x: 0, y: 0, z: Math.PI},
+                position: {x: 0, y: -60, z: 0},
+                scale: 10.0,
+            }
     ], {
         cylinderRadius: PORTAL.CYLINDER_RADIUS,
         cylinderHeight: PORTAL.CYLINDER_HEIGHT,

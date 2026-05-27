@@ -180,8 +180,6 @@ export class HoloPortal {
         starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
         this.splatScene.add(new THREE.Points(starGeometry, new THREE.PointsMaterial({ size: 1.5, color: 0xffffff, sizeAttenuation: true })));
 
-        this.moonSplat = null;
-        this.moonViewer = null;
         this.isUnderwater = false;
         this.wasUnderwater = false;
         this.sceneChangeCallback = null;
@@ -412,7 +410,6 @@ export class HoloPortal {
         }
 
         this.autoAdjustSplatCameraView();
-        setTimeout(() => this.loadMoonSplat().catch(e => console.error(e)), 500);
     }
 
     async injectSkinningForContent(contentIndex, riggingDataPath) {
@@ -664,13 +661,6 @@ export class HoloPortal {
             }
         });
 
-        if (this.moonViewer) {
-            if (this.moonViewer.camera) this.moonViewer.camera.copy(this.splatCamera);
-            if (typeof this.moonViewer.update === 'function') {
-                try { this.moonViewer.update(); } catch (e) {}
-            }
-        }
-
         if (!this.isUnderwater) {
             const prevRT = this.renderer.getRenderTarget();
             this.renderer.setRenderTarget(this.renderTarget);
@@ -726,29 +716,4 @@ export class HoloPortal {
         this.lidUniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
     }
 
-    async loadMoonSplat() {
-        try {
-            const moonPath = new URL('/warpable-GS/moon1.ply', window.location.origin).href;
-            const response = await fetch(moonPath, { method: 'HEAD' });
-            if (!response.ok) return;
-
-            this.moonViewer = new DropInViewer({
-                sharedMemoryForWorkers: false,
-                gpuAcceleratedSort: false
-            });
-            this.tagObjectScene(this.moonViewer, 'underwater');
-            this.splatScene.add(this.moonViewer);
-
-            await this.moonViewer.addSplatScene(moonPath, {
-                progressiveLoad: false,
-                position: [0, 0, 0],
-                scale: [100, 100, 100],
-            });
-
-            this.moonViewer.rotation.z = Math.PI;
-            this.moonViewer.position.set(0, -50, 0);
-        } catch (error) {
-            console.error('Moon splat load error:', error);
-        }
-    }
 }
