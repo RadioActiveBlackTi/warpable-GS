@@ -732,7 +732,10 @@ export class HoloPortal {
             const response = await fetch(moonPath, { method: 'HEAD' });
             if (!response.ok) return;
 
-            this.moonViewer = new DropInViewer();
+            this.moonViewer = new DropInViewer({
+                sharedMemoryForWorkers: false,
+                gpuAcceleratedSort: false
+            });
             this.tagObjectScene(this.moonViewer, 'underwater');
             this.splatScene.add(this.moonViewer);
 
