@@ -166,6 +166,13 @@ async function initHoloPortal() {
     // =========================================================================
     const holoPortal = new HoloPortal(mainScene, mainCamera, renderer, [
             {
+                plyPath: new URL('/warpable-GS/mug.ply', window.location.origin).href,
+                scene: 'main',
+                rotation: {x: 0, y: Math.PI / 180 * 5, z: Math.PI},
+                position: {x: 0, y: -90, z: 0},
+                scale: 35.0,
+            },
+            {
                 plyPath: new URL('/warpable-GS/nubjuk_face_rg.ply', window.location.origin).href,
                 riggingDataPath: new URL('/warpable-GS/nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
                 animationDataPath: new URL('/warpable-GS/nubjuk_anim_1.json', window.location.origin).href,
@@ -257,10 +264,10 @@ async function initHoloPortal() {
 
     // 테이블 탑
     const tableTopMesh = new THREE.Mesh(
-        new THREE.BoxGeometry(800, 8, 600),
+        new THREE.BoxGeometry(800, 30, 600),
         new THREE.MeshStandardMaterial({ color: 0x8b6f47, roughness: 0.6 })
     );
-    tableTopMesh.position.y = -20;
+    tableTopMesh.position.y = -40;
     tableTopMesh.castShadow = true;
     tableTopMesh.receiveShadow = true;
     tagSceneObject(tableTopMesh, 'main');

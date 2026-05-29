@@ -81,51 +81,53 @@ export class HoloPortal {
         this.mainScene.add(this.cupGroup);
 
         this.lidMesh = new THREE.Mesh(lidGeometry, lidMaterial);
-        this.lidMesh.position.y = this.cylinderHeight / 2 - 2;
+        this.lidMesh.position.y = this.cylinderHeight / 2 + 18;
+        this.lidMesh.position.x = -3;
+        this.lidMesh.position.z = -3;
         this.lidMesh.rotation.x = -Math.PI / 2;
         this.cupGroup.add(this.lidMesh);
 
-        this.surfaceMesh = new THREE.Mesh(
-            new THREE.CylinderGeometry(this.cylinderRadius, this.cylinderRadius, this.cylinderHeight, 64, PORTAL.CYLINDER_HEIGHT_SEGMENTS, true),
-            new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.8, side: THREE.DoubleSide })
-        );
-        this.cupGroup.add(this.surfaceMesh);
+        // this.surfaceMesh = new THREE.Mesh(
+        //     new THREE.CylinderGeometry(this.cylinderRadius, this.cylinderRadius, this.cylinderHeight, 64, PORTAL.CYLINDER_HEIGHT_SEGMENTS, true),
+        //     new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.8, side: THREE.DoubleSide })
+        // );
+        // this.cupGroup.add(this.surfaceMesh);
 
-        const outerRatio = 1.1;
-        const outerCylinderMesh = new THREE.Mesh(
-            new THREE.CylinderGeometry(this.cylinderRadius * outerRatio, this.cylinderRadius * outerRatio, this.cylinderHeight, 64, PORTAL.CYLINDER_HEIGHT_SEGMENTS, true),
-            new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.9, side: THREE.FrontSide })
-        );
-        this.cupGroup.add(outerCylinderMesh);
+        // const outerRatio = 1.1;
+        // const outerCylinderMesh = new THREE.Mesh(
+        //     new THREE.CylinderGeometry(this.cylinderRadius * outerRatio, this.cylinderRadius * outerRatio, this.cylinderHeight, 64, PORTAL.CYLINDER_HEIGHT_SEGMENTS, true),
+        //     new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.9, side: THREE.FrontSide })
+        // );
+        // this.cupGroup.add(outerCylinderMesh);
 
-        const rimMesh = new THREE.Mesh(
-            new THREE.RingGeometry(this.cylinderRadius, this.cylinderRadius * outerRatio, 64),
-            new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.9, side: THREE.FrontSide })
-        );
-        rimMesh.rotation.x = -Math.PI / 2;
-        rimMesh.position.y = this.cylinderHeight / 2;
-        this.cupGroup.add(rimMesh);
+        // const rimMesh = new THREE.Mesh(
+        //     new THREE.RingGeometry(this.cylinderRadius, this.cylinderRadius * outerRatio, 64),
+        //     new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.9, side: THREE.FrontSide })
+        // );
+        // rimMesh.rotation.x = -Math.PI / 2;
+        // rimMesh.position.y = this.cylinderHeight / 2;
+        // this.cupGroup.add(rimMesh);
         
-        const floorGeometry = new THREE.RingGeometry(0, this.cylinderRadius * outerRatio, 64);
-        const floorMesh = new THREE.Mesh(floorGeometry, new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.9, side: THREE.FrontSide }));
-        floorMesh.rotation.x = -Math.PI / 2;
-        floorMesh.position.y = -this.cylinderHeight / 2 + 0.1;
-        this.cupGroup.add(floorMesh);
+        // const floorGeometry = new THREE.RingGeometry(0, this.cylinderRadius * outerRatio, 64);
+        // const floorMesh = new THREE.Mesh(floorGeometry, new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.9, side: THREE.FrontSide }));
+        // floorMesh.rotation.x = -Math.PI / 2;
+        // floorMesh.position.y = -this.cylinderHeight / 2 + 0.1;
+        // this.cupGroup.add(floorMesh);
 
-        const floorMesh2 = new THREE.Mesh(floorGeometry, new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.9, side: THREE.BackSide }));
-        floorMesh2.rotation.x = -Math.PI / 2;
-        floorMesh2.position.y = -this.cylinderHeight / 2;
-        this.cupGroup.add(floorMesh2);
+        // const floorMesh2 = new THREE.Mesh(floorGeometry, new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.9, side: THREE.BackSide }));
+        // floorMesh2.rotation.x = -Math.PI / 2;
+        // floorMesh2.position.y = -this.cylinderHeight / 2;
+        // this.cupGroup.add(floorMesh2);
 
-        const handleMesh = new THREE.Mesh(
-            new THREE.TorusGeometry(27, 7, 16, 100, Math.PI),
-            new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.9, side: THREE.FrontSide })
-        );
-        handleMesh.rotation.z = -Math.PI / 2;
-        handleMesh.position.y = 5;
-        handleMesh.position.x = this.cylinderRadius;
-        this.cupGroup.add(handleMesh);
-        this.tagObjectScene(this.cupGroup, 'main');
+        // const handleMesh = new THREE.Mesh(
+        //     new THREE.TorusGeometry(27, 7, 16, 100, Math.PI),
+        //     new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.9, side: THREE.FrontSide })
+        // );
+        // handleMesh.rotation.z = -Math.PI / 2;
+        // handleMesh.position.y = 5;
+        // handleMesh.position.x = this.cylinderRadius;
+        // this.cupGroup.add(handleMesh);
+        // this.tagObjectScene(this.cupGroup, 'main');
 
         // 수중 환경
         this.underwaterLidMesh = this.lidMesh.clone();
@@ -677,18 +679,19 @@ export class HoloPortal {
     }
 
     autoAdjustSplatCameraView() {
-        const bbox = new THREE.Box3();
-        this.splatScene.traverse(obj => {
-            if (obj.geometry && obj.isMesh) bbox.union(new THREE.Box3().setFromObject(obj));
-        });
+        return;
+        // const bbox = new THREE.Box3();
+        // this.splatScene.traverse(obj => {
+        //     if (obj.geometry && obj.isMesh) bbox.union(new THREE.Box3().setFromObject(obj));
+        // });
 
-        if (!bbox.isEmpty()) {
-            const center = bbox.getCenter(new THREE.Vector3());
-            const distance = Math.max(bbox.getSize(new THREE.Vector3()).x, 15) * 2.5;
-            this.splatCamera.position.copy(center).addScaledVector(new THREE.Vector3(1, 0.5, 1).normalize(), distance);
-            this.splatCamera.lookAt(center);
-            this.splatCamera.updateProjectionMatrix();
-        }
+        // if (!bbox.isEmpty()) {
+        //     const center = bbox.getCenter(new THREE.Vector3());
+        //     const distance = Math.max(bbox.getSize(new THREE.Vector3()).x, 15) * 2.5;
+        //     this.splatCamera.position.copy(center).addScaledVector(new THREE.Vector3(1, 0.5, 1).normalize(), distance);
+        //     this.splatCamera.lookAt(center);
+        //     this.splatCamera.updateProjectionMatrix();
+        // }
     }
 
     setPosition(x, y, z) { this.cupGroup.position.set(x, y, z); }
