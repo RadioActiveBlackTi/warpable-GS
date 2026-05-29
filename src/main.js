@@ -165,7 +165,7 @@ async function initHoloPortal() {
     // ✨ 핵심: 스마트해진 HoloPortal 인스턴스화
     // =========================================================================
     const holoPortal = new HoloPortal(mainScene, mainCamera, renderer, [
-        {
+            {
             plyPath: new URL('/warpable-GS/nubjuk_face_rg.ply', window.location.origin).href,
             riggingDataPath: new URL('/warpable-GS/nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
             animationDataPath: new URL('/warpable-GS/nubjuk_anim_1.json', window.location.origin).href,
@@ -180,6 +180,13 @@ async function initHoloPortal() {
                 rotation: {x: 0, y: 0, z: Math.PI},
                 position: {x: 0, y: -60, z: 0},
                 scale: 10.0,
+            },
+            {
+                plyPath: new URL('/warpable-GS/stars_with_planets_8_preview.ply', window.location.origin).href,
+                scene: 'underwater',
+                rotation: {x: 0, y: 0, z: 0},
+                position: {x: 0, y: 0, z: 0},
+                scale: 3.0,
             }
     ], {
         cylinderRadius: PORTAL.CYLINDER_RADIUS,
