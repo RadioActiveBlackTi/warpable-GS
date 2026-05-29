@@ -166,13 +166,13 @@ async function initHoloPortal() {
     // =========================================================================
     const holoPortal = new HoloPortal(mainScene, mainCamera, renderer, [
             {
-            plyPath: new URL('/warpable-GS/nubjuk_face_rg.ply', window.location.origin).href,
-            riggingDataPath: new URL('/warpable-GS/nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
-            animationDataPath: new URL('/warpable-GS/nubjuk_anim_1.json', window.location.origin).href,
-            scene: 'underwater',
-            rotation: {x: 0, y: Math.PI, z: Math.PI},
-            position: {x: 0, y: -25, z: 0},
-            scale: 2.0,
+                plyPath: new URL('/warpable-GS/nubjuk_face_rg.ply', window.location.origin).href,
+                riggingDataPath: new URL('/warpable-GS/nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
+                animationDataPath: new URL('/warpable-GS/nubjuk_anim_1.json', window.location.origin).href,
+                scene: 'underwater',
+                rotation: {x: 0, y: Math.PI, z: Math.PI},
+                position: {x: 0, y: -25, z: 0},
+                scale: 2.0,
             },
             {
                 plyPath: new URL('/warpable-GS/moon1.ply', window.location.origin).href,

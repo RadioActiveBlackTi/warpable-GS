@@ -1,8 +1,0 @@
-{
-    "input_file": "nubjuk_face_rg.ply",
-    "num_points": 19332,
-    "num_nodes": 24,
-    "K": 4,
-    "sigma": 5.0,
-    "data_format": "float32 array of shape (19332, 8)"
-}
