@@ -12,6 +12,8 @@ export class HoloPortal {
         this.mainScene = mainScene;
         this.mainCamera = mainCamera;
         this.renderer = renderer;
+        // 외부에서 전달된 transform animator 팩토리 맵 (키: 식별자 문자열, 값: factory(viewer, content, contentData))
+        this.transformFactoryMap = options.transformFactoryMap || {};
         this.objectSceneMap = new WeakMap();
 
         this.cylinderRadius = options.cylinderRadius ?? PORTAL.CYLINDER_RADIUS;
@@ -395,6 +397,23 @@ export class HoloPortal {
                     viewer.scale.setScalar(content.scale * PORTAL.SPLAT_SCALE);
                 }
 
+                // === content-specific transform animator 생성 ===
+                // 우선 콘텐츠 객체에 `transformFactory` 함수가 있으면 사용합니다.
+                // 없으면 생성자 옵션 `transformFactoryMap`의 키와 매칭되는 factory를 사용합니다.
+                let animator = null;
+                if (typeof content.transformFactory === 'function') {
+                    try { animator = content.transformFactory(viewer, content, contentData); } catch (e) { console.error('transformFactory error:', e); }
+                } else if (typeof content.plyPath === 'string') {
+                    const path = content.plyPath;
+                    for (const key of Object.keys(this.transformFactoryMap)) {
+                        if (path.includes(key) && typeof this.transformFactoryMap[key] === 'function') {
+                            try { animator = this.transformFactoryMap[key](viewer, content, contentData); } catch (e) { console.error('transformFactoryMap error:', e); }
+                            if (animator) break;
+                        }
+                    }
+                }
+                if (animator) contentData.transformAnimator = animator;
+
                 console.log(`✅ 레이어 [${i}] 로드 및 스킨닝 완료`);
             } catch (error) {
                 console.error(`❌ 레이어 [${i}] 로드 실패:`, error);
@@ -579,6 +598,14 @@ export class HoloPortal {
         this.lidUniforms.uTime.value += deltaTime;
 
         this.contentData.forEach((contentData, contentIndex) => {
+            // transform animator (per-content RBT-like motion) - run for all contents
+            if (contentData.transformAnimator && contentData.viewer) {
+                try {
+                    contentData.transformAnimator.update(deltaTime, contentData.viewer);
+                } catch (e) {
+                    // ignore
+                }
+            }
             if (contentData.arap) {
                 const arap = contentData.arap;
 
@@ -611,6 +638,8 @@ export class HoloPortal {
                     this.solveArap(arap, handles, ARAP.ITERATIONS ?? 4);
                     this.updateBoneTextureForContent(contentIndex, arap);
                 }
+                    // update last dt used by transform animator
+                    if (contentData.transformAnimator) contentData._animLastDt = deltaTime;
             }
         });
 

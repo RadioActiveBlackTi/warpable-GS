@@ -173,6 +173,13 @@ async function initHoloPortal() {
                 scale: 35.0,
             },
             {
+                plyPath: new URL('/warpable-GS/stars_with_planets_8_preview.ply', window.location.origin).href,
+                scene: 'underwater',
+                rotation: {x: 0, y: 0, z: 0},
+                position: {x: 0, y: 0, z: 0},
+                scale: 3.0,
+            },
+            {
                 plyPath: new URL('/warpable-GS/nubjuk_face_rg.ply', window.location.origin).href,
                 riggingDataPath: new URL('/warpable-GS/nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
                 animationDataPath: new URL('/warpable-GS/nubjuk_anim_1.json', window.location.origin).href,
@@ -182,19 +189,64 @@ async function initHoloPortal() {
                 scale: 2.0,
             },
             {
+                plyPath: new URL('/warpable-GS/nubjuk_yg.ply', window.location.origin).href,
+                riggingDataPath: new URL('/warpable-GS/nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
+                animationDataPath: new URL('/warpable-GS/nubjuk_anim_swing.json', window.location.origin).href,
+                scene: 'underwater',
+                rotation: {x: Math.PI / 2, y: 0, z: Math.PI / 180 * 160},
+                position: {x: 0, y: PORTAL.CYLINDER_HEIGHT + 18, z: 0},
+                scale: 1.5,
+                transformFactory: (viewer, content, contentData) => {
+                    const basePos = viewer.position.clone();
+                    return {
+                        time: Math.random() * Math.PI * 2,
+                        speed: 0.9,
+                        amp: 10,
+                        sway: 0.4,
+                        update(dt, v) {
+                            this.time += dt * this.speed;
+                            v.position.y = basePos.y + Math.sin(this.time) * this.amp;
+                            v.rotation.z = Math.sin(this.time * 0.6) * this.sway;
+                            v.rotation.y += 0.01 * dt;
+                        }
+                    };
+                }
+            },
+            {
+                plyPath: new URL('/warpable-GS/nubjuk_red.ply', window.location.origin).href,
+                riggingDataPath: new URL('/warpable-GS/nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
+                animationDataPath: new URL('/warpable-GS/nubjuk_anim_swim.json', window.location.origin).href,
+                scene: 'underwater',
+                rotation: {x: 0, y: 0, z: Math.PI},
+                position: {x: 0, y: -25, z: 0},
+                scale: 2.0,
+                transformFactory: (viewer, content, contentData) => {
+                    const basePos = viewer.position.clone();
+                    return {
+                        angle: 0,
+                        spin: 1.8,
+                        orbitSpeed: 0.6,
+                        radius: 200,
+                        update(dt, v) {
+                            this.angle += this.orbitSpeed * dt;
+                            const cx = basePos.x || 0;
+                            const cz = basePos.z || 0;
+                            v.position.x = cx + Math.cos(this.angle) * this.radius;
+                            v.position.z = cz + Math.sin(this.angle) * this.radius;
+                            v.rotation.x += this.spin * dt;
+                            v.rotation.y += this.spin * 0.5 * dt;
+                        }
+                    };
+                }
+            },
+            {
                 plyPath: new URL('/warpable-GS/moon1.ply', window.location.origin).href,
                 scene: 'underwater',
                 rotation: {x: 0, y: 0, z: Math.PI},
                 position: {x: 0, y: -60, z: 0},
                 scale: 10.0,
             },
-            {
-                plyPath: new URL('/warpable-GS/stars_with_planets_8_preview.ply', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: 0, z: 0},
-                position: {x: 0, y: 0, z: 0},
-                scale: 3.0,
-            }
+            
     ], {
         cylinderRadius: PORTAL.CYLINDER_RADIUS,
         cylinderHeight: PORTAL.CYLINDER_HEIGHT,
