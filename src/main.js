@@ -166,32 +166,32 @@ async function initHoloPortal() {
     // =========================================================================
     const holoPortal = new HoloPortal(mainScene, mainCamera, renderer, [
             {
-                plyPath: new URL('/warpable-GS/mug.ply', window.location.origin).href,
+                plyPath: new URL(import.meta.env.BASE_URL + 'mug.ply', window.location.origin).href,
                 scene: 'main',
                 rotation: {x: 0, y: Math.PI / 180 * 5, z: Math.PI},
                 position: {x: 0, y: -90, z: 0},
                 scale: 35.0,
             },
             {
-                plyPath: new URL('/warpable-GS/stars_with_planets_8_preview.ply', window.location.origin).href,
+                plyPath: new URL(import.meta.env.BASE_URL + 'stars_with_planets_8_preview.ply', window.location.origin).href,
                 scene: 'underwater',
                 rotation: {x: 0, y: 0, z: 0},
                 position: {x: 0, y: 0, z: 0},
                 scale: 3.0,
             },
             {
-                plyPath: new URL('/warpable-GS/nubjuk_face_rg.ply', window.location.origin).href,
-                riggingDataPath: new URL('/warpable-GS/nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
-                animationDataPath: new URL('/warpable-GS/nubjuk_anim_1.json', window.location.origin).href,
+                plyPath: new URL(import.meta.env.BASE_URL + 'nubjuk_face_rg.ply', window.location.origin).href,
+                riggingDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
+                animationDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_anim_1.json', window.location.origin).href,
                 scene: 'underwater',
                 rotation: {x: 0, y: Math.PI, z: Math.PI},
                 position: {x: 0, y: -25, z: 0},
                 scale: 2.0,
             },
             {
-                plyPath: new URL('/warpable-GS/nubjuk_yg.ply', window.location.origin).href,
-                riggingDataPath: new URL('/warpable-GS/nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
-                animationDataPath: new URL('/warpable-GS/nubjuk_anim_swing.json', window.location.origin).href,
+                plyPath: new URL(import.meta.env.BASE_URL + 'nubjuk_yg.ply', window.location.origin).href,
+                riggingDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
+                animationDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_anim_swing.json', window.location.origin).href,
                 scene: 'underwater',
                 rotation: {x: Math.PI / 2, y: 0, z: Math.PI / 180 * 160},
                 position: {x: 0, y: PORTAL.CYLINDER_HEIGHT + 18, z: 0},
@@ -213,9 +213,9 @@ async function initHoloPortal() {
                 }
             },
             {
-                plyPath: new URL('/warpable-GS/nubjuk_red.ply', window.location.origin).href,
-                riggingDataPath: new URL('/warpable-GS/nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
-                animationDataPath: new URL('/warpable-GS/nubjuk_anim_swim.json', window.location.origin).href,
+                plyPath: new URL(import.meta.env.BASE_URL + 'nubjuk_red.ply', window.location.origin).href,
+                riggingDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
+                animationDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_anim_swim.json', window.location.origin).href,
                 scene: 'underwater',
                 rotation: {x: 0, y: 0, z: Math.PI},
                 position: {x: 0, y: -25, z: 0},
@@ -240,7 +240,7 @@ async function initHoloPortal() {
                 }
             },
             {
-                plyPath: new URL('/warpable-GS/moon1.ply', window.location.origin).href,
+                plyPath: new URL(import.meta.env.BASE_URL + 'moon1.ply', window.location.origin).href,
                 scene: 'underwater',
                 rotation: {x: 0, y: 0, z: Math.PI},
                 position: {x: 0, y: -60, z: 0},

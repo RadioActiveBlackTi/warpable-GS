@@ -15,7 +15,7 @@ const crossOriginIsolationPlugin = () => ({
 });
 
 export default defineConfig({
-  base: '/warpable-GS/',
+  base: './',
   plugins: [crossOriginIsolationPlugin()],
   build: {
     rollupOptions: {
