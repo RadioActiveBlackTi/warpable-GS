@@ -1,4 +1,4 @@
-  python edit_face_sh.py nubjuki.ply nubjuki_rainbow.ply \
+  python edit_face_sh.py Nubjuki.ply Nubjuki_rainbow.ply \
   --mode replace \
   --x_range -0.7 0.8 \
   --y_range -1.4 -0.7 \
