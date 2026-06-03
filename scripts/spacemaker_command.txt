@@ -1,0 +1,12 @@
+python space_maker.py \
+  -o space_background.ply \
+  --stars 2200 \
+  --dust-candidates 32000 \
+  --dust-threshold 0.50 \
+  --dust-opacity-min 0.014 \
+  --dust-opacity-max 0.055 \
+  --dust-min-scale 0.040 \
+  --dust-max-scale 0.200 \
+  --dust-brightness-min 0.35 \
+  --dust-brightness-max 0.80 \
+  --planets 8

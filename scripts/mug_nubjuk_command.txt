@@ -1,0 +1,36 @@
+# dataset/
+# ├── mug/
+# │   └── ...
+# └── Nubjuki/
+#     └── ...
+
+# Generate mug splat
+QT_QPA_PLATFORM=offscreen ns-process-data images \
+  --data ./dataset/mug \
+  --output-dir ./data/mug \
+  --sfm-tool colmap \
+  --no-gpu
+
+ns-train splatfacto \
+  --data ./data/mug \
+  --output-dir ./outputs
+
+TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 ns-export gaussian-splat \
+  --load-config ./outputs/mug/splatfacto/"you have to check this folder's name"/config.yml \
+  --output-dir ./exports/mug
+
+
+# Generate Nubjuki splat
+QT_QPA_PLATFORM=offscreen ns-process-data images \
+  --data ./dataset/Nubjuki \
+  --output-dir ./data/Nubjuki \
+  --sfm-tool colmap \
+  --no-gpu
+
+ns-train splatfacto \
+  --data ./data/Nubjuki \
+  --output-dir ./outputs
+
+TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 ns-export gaussian-splat \
+  --load-config ./outputs/Nubjuki/splatfacto/"you have to check this folder's name"/config.yml \
+  --output-dir ./exports/Nubjuki

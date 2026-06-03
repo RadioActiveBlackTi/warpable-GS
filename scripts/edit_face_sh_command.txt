@@ -1,0 +1,6 @@
+  python edit_face_sh.py nubjuki.ply nubjuki_rainbow.ply \
+  --mode replace \
+  --x_range -0.7 0.8 \
+  --y_range -1.4 -0.7 \
+  --z_range -0.58 1.0 \
+  --x_r 0.60 --x_g -0.60 --x_b 0.00

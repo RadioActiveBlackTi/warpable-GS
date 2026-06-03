@@ -1,0 +1,2 @@
+# Pick hue shift value from 0 to 1 as you want: {hue_shift}
+python colorshift.py --input_ply {input ply path} --output_ply {output ply path} --shift_amount {hue_shift} 

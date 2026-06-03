@@ -1,0 +1,7 @@
+# Step 1. Run following command and obtain dataset.
+python moonsynth.py
+
+# Step 2. Run ns-train.
+ns-train splatfacto --data ./dataset/moon --output-dir ./outputs/moon
+
+# Step 3. Then, using 'ns-export', obtain your ply.

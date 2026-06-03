@@ -1,0 +1,2 @@
+# input.ply means your target ply for obtaining skinning points.
+  python skin_weight.py {input.ply} -n 300 --sigma 3.0
