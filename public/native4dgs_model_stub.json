@@ -1,0 +1,12 @@
+{
+    "type": "native4dgs-runtime-v1",
+    "backend": "zero",
+    "frameCount": 120,
+    "fps": 24,
+    "rank": 1,
+    "loop": true,
+    "playing": true,
+    "speed": 1.0,
+    "displacementScale": 1.0,
+    "note": ""
+}
