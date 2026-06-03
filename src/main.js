@@ -15,7 +15,7 @@ async function initHoloPortal() {
     app.appendChild(renderer.domElement);
 
     const mainScene = new THREE.Scene();
-    
+
     // ====== 배경 생성 (따뜻한 톤 그라데이션) ======
     const canvas = document.createElement('canvas');
     canvas.width = 512;
@@ -27,7 +27,7 @@ async function initHoloPortal() {
     gradient.addColorStop(1, '#8b7d72');    // 아래: 따뜻한 갈색
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
+
     const gradientTexture = new THREE.CanvasTexture(canvas);
     mainScene.background = gradientTexture;
 
@@ -165,151 +165,151 @@ async function initHoloPortal() {
     // ✨ 핵심: 스마트해진 HoloPortal 인스턴스화
     // =========================================================================
     const holoPortal = new HoloPortal(mainScene, mainCamera, renderer, [
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'mug.ply', window.location.origin).href,
-                scene: 'main',
-                rotation: {x: 0, y: Math.PI / 180 * 5, z: Math.PI},
-                position: {x: 0, y: -90, z: 0},
-                scale: 35.0,
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'scene_without_planets.ply', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: 0, z: 0},
-                position: {x: 0, y: 0, z: 0},
-                scale: 3.0,
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'planet1.ply', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: 0, z: 0},
-                position: {x: 0, y: 0, z: 0},
-                scale: 3.0,
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'planet2.ply', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: 0, z: 0},
-                position: {x: 0, y: 0, z: 0},
-                scale: 3.0,
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'planet3.ply', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: 0, z: 0},
-                position: {x: 0, y: 0, z: 0},
-                scale: 3.0,
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'planet4.ply', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: 0, z: 0},
-                position: {x: 0, y: 0, z: 0},
-                scale: 3.0,
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'planet4.ply', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: 0, z: 0},
-                position: {x: 0, y: 0, z: 0},
-                scale: 3.0,
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'planet5.ply', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: 0, z: 0},
-                position: {x: 0, y: 0, z: 0},
-                scale: 3.0,
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'planet6.ply', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: 0, z: 0},
-                position: {x: 0, y: 0, z: 0},
-                scale: 3.0,
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'planet7.ply', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: 0, z: 0},
-                position: {x: 0, y: 0, z: 0},
-                scale: 3.0,
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'planet8.ply', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: 0, z: 0},
-                position: {x: 0, y: 0, z: 0},
-                scale: 3.0,
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'nubjuk_face_rg.ply', window.location.origin).href,
-                riggingDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
-                animationDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_anim_1.json', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: Math.PI, z: Math.PI},
-                position: {x: 0, y: -25, z: 0},
-                scale: 2.0,
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'nubjuk_yg.ply', window.location.origin).href,
-                riggingDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
-                animationDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_anim_swing.json', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: Math.PI / 2, y: 0, z: Math.PI / 180 * 160},
-                position: {x: 0, y: PORTAL.CYLINDER_HEIGHT + 18, z: 0},
-                scale: 1.5,
-                transformFactory: (viewer, content, contentData) => {
-                    const basePos = viewer.position.clone();
-                    return {
-                        time: Math.random() * Math.PI * 2,
-                        speed: 0.9,
-                        amp: 10,
-                        sway: 0.4,
-                        update(dt, v) {
-                            this.time += dt * this.speed;
-                            v.position.y = basePos.y + Math.sin(this.time) * this.amp;
-                            v.rotation.z = Math.sin(this.time * 0.6) * this.sway;
-                            v.rotation.y += 0.01 * dt;
-                        }
-                    };
-                }
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'nubjuk_red.ply', window.location.origin).href,
-                riggingDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
-                animationDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_anim_swim.json', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: 0, y: 0, z: Math.PI},
-                position: {x: 0, y: -25, z: 0},
-                scale: 2.0,
-                transformFactory: (viewer, content, contentData) => {
-                    const basePos = viewer.position.clone();
-                    return {
-                        angle: 0,
-                        spin: 1.8,
-                        orbitSpeed: 0.6,
-                        radius: 200,
-                        update(dt, v) {
-                            this.angle += this.orbitSpeed * dt;
-                            const cx = basePos.x || 0;
-                            const cz = basePos.z || 0;
-                            v.position.x = cx + Math.cos(this.angle) * this.radius;
-                            v.position.z = cz + Math.sin(this.angle) * this.radius;
-                            v.rotation.x += this.spin * dt;
-                            v.rotation.y += this.spin * 0.5 * dt;
-                        }
-                    };
-                }
-            },
-            {
-                plyPath: new URL(import.meta.env.BASE_URL + 'moon.ply', window.location.origin).href,
-                scene: 'underwater',
-                rotation: {x: -Math.PI / 2, y: 0, z: 0},
-                position: {x: 0, y: -60, z: 0},
-                scale: 6.7,
-            },
-            
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'mug.ply', window.location.origin).href,
+            scene: 'main',
+            rotation: { x: 0, y: Math.PI / 180 * 5, z: Math.PI },
+            position: { x: 0, y: -90, z: 0 },
+            scale: 35.0,
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'scene_without_planets.ply', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: 0, y: 0, z: 0 },
+            position: { x: 0, y: 0, z: 0 },
+            scale: 3.0,
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'planet1.ply', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: 0, y: 0, z: 0 },
+            position: { x: 0, y: 0, z: 0 },
+            scale: 3.0,
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'planet2.ply', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: 0, y: 0, z: 0 },
+            position: { x: 0, y: 0, z: 0 },
+            scale: 3.0,
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'planet3.ply', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: 0, y: 0, z: 0 },
+            position: { x: 0, y: 0, z: 0 },
+            scale: 3.0,
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'planet4.ply', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: 0, y: 0, z: 0 },
+            position: { x: 0, y: 0, z: 0 },
+            scale: 3.0,
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'planet4.ply', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: 0, y: 0, z: 0 },
+            position: { x: 0, y: 0, z: 0 },
+            scale: 3.0,
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'planet5.ply', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: 0, y: 0, z: 0 },
+            position: { x: 0, y: 0, z: 0 },
+            scale: 3.0,
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'planet6.ply', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: 0, y: 0, z: 0 },
+            position: { x: 0, y: 0, z: 0 },
+            scale: 3.0,
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'planet7.ply', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: 0, y: 0, z: 0 },
+            position: { x: 0, y: 0, z: 0 },
+            scale: 3.0,
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'planet8.ply', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: 0, y: 0, z: 0 },
+            position: { x: 0, y: 0, z: 0 },
+            scale: 3.0,
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'nubjuk_face_rg.ply', window.location.origin).href,
+            riggingDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
+            animationDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_anim_1.json', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: 0, y: Math.PI, z: Math.PI },
+            position: { x: 0, y: -25, z: 0 },
+            scale: 2.0,
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'nubjuk_yg.ply', window.location.origin).href,
+            riggingDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
+            animationDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_anim_swing.json', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: Math.PI / 2, y: 0, z: Math.PI / 180 * 160 },
+            position: { x: 0, y: PORTAL.CYLINDER_HEIGHT + 18, z: 0 },
+            scale: 1.5,
+            transformFactory: (viewer, content, contentData) => {
+                const basePos = viewer.position.clone();
+                return {
+                    time: Math.random() * Math.PI * 2,
+                    speed: 0.9,
+                    amp: 10,
+                    sway: 0.4,
+                    update(dt, v) {
+                        this.time += dt * this.speed;
+                        v.position.y = basePos.y + Math.sin(this.time) * this.amp;
+                        v.rotation.z = Math.sin(this.time * 0.6) * this.sway;
+                        v.rotation.y += 0.01 * dt;
+                    }
+                };
+            }
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'nubjuk_red.ply', window.location.origin).href,
+            riggingDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_face_rg_nodes300_sigma5.0/proxy_nodes.json', window.location.origin).href,
+            animationDataPath: new URL(import.meta.env.BASE_URL + 'nubjuk_anim_swim.json', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: 0, y: 0, z: Math.PI },
+            position: { x: 0, y: -25, z: 0 },
+            scale: 2.0,
+            transformFactory: (viewer, content, contentData) => {
+                const basePos = viewer.position.clone();
+                return {
+                    angle: 0,
+                    spin: 1.8,
+                    orbitSpeed: 0.6,
+                    radius: 200,
+                    update(dt, v) {
+                        this.angle += this.orbitSpeed * dt;
+                        const cx = basePos.x || 0;
+                        const cz = basePos.z || 0;
+                        v.position.x = cx + Math.cos(this.angle) * this.radius;
+                        v.position.z = cz + Math.sin(this.angle) * this.radius;
+                        v.rotation.x += this.spin * dt;
+                        v.rotation.y += this.spin * 0.5 * dt;
+                    }
+                };
+            }
+        },
+        {
+            plyPath: new URL(import.meta.env.BASE_URL + 'moon.ply', window.location.origin).href,
+            scene: 'underwater',
+            rotation: { x: -Math.PI / 2, y: 0, z: 0 },
+            position: { x: 0, y: -60, z: 0 },
+            scale: 6.7,
+        },
+
     ], {
         cylinderRadius: PORTAL.CYLINDER_RADIUS,
         cylinderHeight: PORTAL.CYLINDER_HEIGHT,
@@ -330,7 +330,7 @@ async function initHoloPortal() {
     // ====== UI 세팅 (진폭 슬라이더) ======
     const ui = document.createElement('div');
     ui.style.cssText = 'position:fixed;right:16px;top:16px;z-index:9999;width:220px;padding:12px;border-radius:12px;background:rgba(0,0,0,0.65);color:#fff;font:13px/1.4 system-ui,sans-serif;';
-    
+
     const ampLabel = document.createElement('div');
     ampLabel.textContent = '포탈 표면 물결 진폭';
     const ampValue = document.createElement('div');
@@ -358,11 +358,11 @@ async function initHoloPortal() {
     light1.position.set(150, 200, 100);
     light1.castShadow = true;
     tagSceneObject(light1, 'main');
-    
+
     const light2 = new THREE.DirectionalLight(0xb8d4ff, 1.5);
     light2.position.set(-150, 180, -150);
     tagSceneObject(light2, 'main');
-    
+
     const ambientLight = new THREE.AmbientLight(0xf5e6d3, 0.9);
     tagSceneObject(ambientLight, 'main');
     mainScene.add(light1, light2, ambientLight);
@@ -447,7 +447,7 @@ async function initHoloPortal() {
     function animate() {
         requestAnimationFrame(animate);
         const delta = clock.getDelta();
-        
+
         if (cameraMode === 'ego') {
             moveEgoCamera(delta);
         } else {

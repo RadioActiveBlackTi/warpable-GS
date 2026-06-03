@@ -3,6 +3,7 @@ import { setupLidShaderInjection, getGaussianSplatLBSInjection } from './shaders
 import { RBF_WEIGHTS, PORTAL, LIGHTS, ARAP } from './constants.js';
 import { normalizeKeyframePayload, LoopingKeyframeAnimator } from './rigging/index.js';
 import { DropInViewer } from '@mkkellogg/gaussian-splats-3d';
+import { Native4DGSRuntime } from './native4dgsRuntime.js';
 
 // [핵심 해결] 엉뚱한 VolumetricARAP 대신 mathUtils에서 함수를 바로 가져옵니다.
 import { extractRotation3D, outerProduct3 } from './mathUtils.js';
@@ -21,7 +22,7 @@ export class HoloPortal {
         this.splatScale = options.splatScale ?? PORTAL.SPLAT_SCALE;
         this.color = options.color ?? 0x444455;
         this.portalPassMargin = options.portalPassMargin ?? 2.0;
-        
+
         if (typeof plyPath === 'string') {
             this.contents = [{
                 plyPath: plyPath,
@@ -109,7 +110,7 @@ export class HoloPortal {
         // rimMesh.rotation.x = -Math.PI / 2;
         // rimMesh.position.y = this.cylinderHeight / 2;
         // this.cupGroup.add(rimMesh);
-        
+
         // const floorGeometry = new THREE.RingGeometry(0, this.cylinderRadius * outerRatio, 64);
         // const floorMesh = new THREE.Mesh(floorGeometry, new THREE.MeshStandardMaterial({ color: this.color, roughness: 0.9, side: THREE.FrontSide }));
         // floorMesh.rotation.x = -Math.PI / 2;
@@ -293,7 +294,7 @@ export class HoloPortal {
         const startTime = Date.now();
         let lastSplatCount = 0;
         let stableSplatCount = 0;
-        
+
         while (Date.now() - startTime < maxWaitTime) {
             const splatMesh = viewer?.splatMesh;
             if (splatMesh) {
@@ -301,7 +302,7 @@ export class HoloPortal {
                 const hasBuffer = !!splatMesh.scenes?.[0]?.splatBuffer || !!splatMesh.splatBuffers?.[0];
                 const hasGeometry = !!splatMesh.geometry;
                 const hasMat = !!splatMesh.material && !!splatMesh.material.uniforms;
-                
+
                 if (splatCount > 0 && hasBuffer && hasGeometry && hasMat) {
                     if (splatCount === lastSplatCount) {
                         stableSplatCount++;
@@ -368,7 +369,9 @@ export class HoloPortal {
                 });
                 await this.waitForSplatMeshReady(viewer, 30000);
 
-                if (content.riggingDataPath) {
+                if (content.native4dgsManifest || content.native4dgsOptions) {
+                    await this.injectNative4DGSForContent(i, content);
+                } else if (content.riggingDataPath) {
                     const success = await this.injectSkinningForContent(i, content.riggingDataPath);
                     if (success && content.animationDataPath) {
                         await this.loadAnimationForContent(i, content.animationDataPath);
@@ -433,13 +436,32 @@ export class HoloPortal {
         this.autoAdjustSplatCameraView();
     }
 
+
+    async injectNative4DGSForContent(contentIndex, content) {
+        const contentData = this.contentData.get(contentIndex);
+        if (!contentData?.viewer?.splatMesh) return false;
+
+        const splatCount = contentData.viewer.splatMesh.getSplatCount?.() ?? 0;
+        if (splatCount <= 0) {
+            console.warn('[Native4DGS] splatCount is zero; skipping runtime attach');
+            return false;
+        }
+
+        const runtime = new Native4DGSRuntime();
+        await runtime.load(content.native4dgsManifest || content.native4dgsOptions || null, content.native4dgsRuntimeOptions || {});
+        await runtime.attachToSplatMesh(contentData.viewer.splatMesh, splatCount);
+
+        contentData.native4dgsRuntime = runtime;
+        return true;
+    }
+
     async injectSkinningForContent(contentIndex, riggingDataPath) {
         const contentData = this.contentData.get(contentIndex);
         if (!contentData) return false;
 
         const response = await fetch(riggingDataPath);
         const riggingData = await response.json();
-        
+
         let skinningPoints = [];
         if (Array.isArray(riggingData)) {
             skinningPoints = riggingData.map(p => new THREE.Vector3(p.x, p.y, p.z));
@@ -461,7 +483,7 @@ export class HoloPortal {
 
         const texW = Math.max(1, texSize.x | 0);
         const texH = Math.max(1, texSize.y | 0);
-        
+
         const { splatCount, centers } = this.getSplatCountAndCenters(splatMesh);
         if (centers.length === 0) return false;
 
@@ -606,6 +628,10 @@ export class HoloPortal {
                     // ignore
                 }
             }
+            if (contentData.native4dgsRuntime) {
+                contentData.native4dgsRuntime.update(deltaTime);
+            }
+
             if (contentData.arap) {
                 const arap = contentData.arap;
 
@@ -621,7 +647,7 @@ export class HoloPortal {
                     const t = contentData.animationTime;
                     const handles = new Map();
                     const n = arap.restPositions.length;
-                    
+
                     for (let i = 0; i < Math.min(4, n); i++) {
                         handles.set(i, arap.restPositions[i].clone());
                     }
@@ -638,8 +664,8 @@ export class HoloPortal {
                     this.solveArap(arap, handles, ARAP.ITERATIONS ?? 4);
                     this.updateBoneTextureForContent(contentIndex, arap);
                 }
-                    // update last dt used by transform animator
-                    if (contentData.transformAnimator) contentData._animLastDt = deltaTime;
+                // update last dt used by transform animator
+                if (contentData.transformAnimator) contentData._animLastDt = deltaTime;
             }
         });
 
@@ -668,7 +694,7 @@ export class HoloPortal {
         this.cupGroup.updateMatrixWorld(true);
         this.lidMesh.getWorldPosition(this._tmpPortalPos);
         this.lidMesh.getWorldQuaternion(this._tmpPortalQuat);
-        
+
         this.underwaterLidMesh.position.copy(this._tmpPortalPos);
         this.underwaterLidMesh.quaternion.copy(this._tmpPortalQuat);
         this.underwaterPortalLight.position.copy(this._tmpPortalPos).y += this.cylinderHeight * 0.45;
@@ -687,7 +713,7 @@ export class HoloPortal {
             if (contentData.viewer) {
                 if (contentData.viewer.camera) contentData.viewer.camera.copy(this.splatCamera);
                 if (typeof contentData.viewer.update === 'function') {
-                    try { contentData.viewer.update(); } catch (e) {}
+                    try { contentData.viewer.update(); } catch (e) { }
                 }
             }
         });
