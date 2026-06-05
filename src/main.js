@@ -153,6 +153,7 @@ async function initHoloPortal() {
       controls.update();
     }
   };
+
   syncEgoAnglesFromOrbit();
 
   cameraModeToggle?.addEventListener("change", () => {
@@ -684,7 +685,7 @@ async function initHoloPortal() {
 
     angularSpeed: 0.35,
 
-    faceTangent: true,
+    followPathDirection: false,
 
     pitch: aronaViewer?.rotation.x ?? 0,
 
@@ -692,6 +693,22 @@ async function initHoloPortal() {
 
     roll: aronaViewer?.rotation.z ?? 0,
   };
+
+  const aronaPathForward = new THREE.Vector3();
+
+  const aronaPathRight = new THREE.Vector3();
+
+  const aronaPathWorldUp = new THREE.Vector3(0, 1, 0);
+
+  const aronaPathCorrectedUp = new THREE.Vector3();
+
+  const aronaPathRotationMatrix = new THREE.Matrix4();
+
+  const aronaPathQuaternion = new THREE.Quaternion();
+
+  const aronaPathOffsetQuaternion = new THREE.Quaternion();
+
+  const aronaPathOffsetEuler = new THREE.Euler(0, 0, 0, "YXZ");
 
   const updateAronaTrajectory = (deltaTime) => {
     if (!aronaViewer || !moonViewer || !aronaPathState.enabled) {
@@ -714,17 +731,50 @@ async function initHoloPortal() {
       center.z + sinPhase * aronaPathState.radius,
     );
 
-    let yaw = aronaPathState.yawOffset;
+    if (aronaPathState.followPathDirection) {
+      aronaPathForward
+        .set(
+          -sinPhase * aronaPathState.radius,
+          0,
+          cosPhase * aronaPathState.radius,
+        )
+        .normalize();
 
-    if (aronaPathState.faceTangent) {
-      const tangentX = -sinPhase * aronaPathState.radius;
+      aronaPathRight
+        .crossVectors(aronaPathWorldUp, aronaPathForward)
+        .normalize();
 
-      const tangentZ = cosPhase * aronaPathState.radius;
+      aronaPathCorrectedUp
+        .crossVectors(aronaPathForward, aronaPathRight)
+        .normalize();
 
-      yaw += Math.atan2(tangentX, tangentZ);
+      aronaPathRotationMatrix.makeBasis(
+        aronaPathRight,
+        aronaPathCorrectedUp,
+        aronaPathForward,
+      );
+
+      aronaPathQuaternion.setFromRotationMatrix(aronaPathRotationMatrix);
+
+      aronaPathOffsetEuler.set(
+        aronaPathState.pitch,
+        aronaPathState.yawOffset,
+        aronaPathState.roll,
+        "YXZ",
+      );
+
+      aronaPathOffsetQuaternion.setFromEuler(aronaPathOffsetEuler);
+
+      aronaViewer.quaternion
+        .copy(aronaPathQuaternion)
+        .multiply(aronaPathOffsetQuaternion);
+    } else {
+      aronaViewer.rotation.set(
+        aronaPathState.pitch,
+        aronaPathState.yawOffset,
+        aronaPathState.roll,
+      );
     }
-
-    aronaViewer.rotation.set(aronaPathState.pitch, yaw, aronaPathState.roll);
   };
 
   const setAronaMotionPlaying = (playing) => {
@@ -1082,19 +1132,19 @@ async function initHoloPortal() {
     },
   });
 
-  const faceTangentToggle = createCheckbox({
+  const followPathDirectionToggle = createCheckbox({
     parent: trajectorySection,
 
-    key: "faceTangent",
+    key: "followPathDirection",
 
-    label: "Face movement direction",
+    label: "Walk facing path direction",
 
-    checked: aronaPathState.faceTangent,
+    checked: aronaPathState.followPathDirection,
 
     disabled: !aronaViewer || !moonViewer,
 
     onChange: (enabled) => {
-      aronaPathState.faceTangent = enabled;
+      aronaPathState.followPathDirection = enabled;
 
       if (!enabled && aronaViewer) {
         aronaViewer.rotation.set(
@@ -1451,7 +1501,7 @@ async function initHoloPortal() {
 
     aronaPathState.angularSpeed = 0.35;
 
-    aronaPathState.faceTangent = true;
+    aronaPathState.followPathDirection = false;
 
     aronaPathState.pitch = aronaInitialState.rotation.x;
 
@@ -1459,7 +1509,7 @@ async function initHoloPortal() {
 
     aronaPathState.roll = aronaInitialState.rotation.z;
 
-    faceTangentToggle.checked = true;
+    followPathDirectionToggle.checked = false;
 
     setControlDisabled("positionX", false);
 
