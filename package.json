@@ -14,5 +14,18 @@
   "dependencies": {
     "@mkkellogg/gaussian-splats-3d": "^0.4.7",
     "three": "^0.184.0"
-  }
+  },
+  "description": "<div align=center>\r   <img src=\"./image.png\" width=\"400\" />\r </div>",
+  "main": "vite.config.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RadioActiveBlackTi/warpable-GS.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/RadioActiveBlackTi/warpable-GS/issues"
+  },
+  "homepage": "https://github.com/RadioActiveBlackTi/warpable-GS#readme"
 }

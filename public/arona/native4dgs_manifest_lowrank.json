@@ -1,0 +1,13 @@
+{
+  "type": "native4dgs-runtime-v1",
+  "backend": "lowrank_texture",
+  "gaussianCount": 91800,
+  "frameCount": 64,
+  "fps": 10.666666666666666,
+  "rank": 8,
+  "loop": true,
+  "speed": 1.0,
+  "displacementScale": 1.0,
+  "basisPath": "basis_rank8_rgba32f.bin",
+  "weightsPath": "weights_rank8_rgba32f.bin"
+}

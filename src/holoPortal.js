@@ -347,11 +347,20 @@ export class HoloPortal {
         for (let i = 0; i < this.contents.length; i++) {
             const content = this.contents[i];
             const sceneType = this.getContentSceneType(content);
+
+            const isNative4DGS = Boolean(
+                content.native4dgsManifest ||
+                content.native4dgsOptions
+            );
             try {
                 const viewer = new DropInViewer({
                     gpuAcceleratedSort: false,
                     sharedMemoryForWorkers: false,
-                    sphericalHarmonicsDegree: 2,
+                    sphericalHarmonicsDegree: isNative4DGS ? 0 : 2,
+                    dynamicScene: isNative4DGS,
+                    optimizeSplatData: isNative4DGS ? false : true,
+                    inMemoryCompressionLevel: 0,
+                    freeIntermediateSplatData: false,
                 });
                 this.tagObjectScene(viewer, sceneType);
                 const targetScene = sceneType === 'main' ? this.mainScene : this.splatScene;
@@ -364,6 +373,7 @@ export class HoloPortal {
 
                 await viewer.addSplatScene(content.plyPath, {
                     progressiveLoad: false,
+                    splatAlphaRemovalThreshold: isNative4DGS ? 0 : 1,
                     position: [0, 0, 0],
                     scale: [1, 1, 1],
                 });

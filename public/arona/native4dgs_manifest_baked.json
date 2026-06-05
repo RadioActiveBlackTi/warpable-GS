@@ -1,0 +1,16 @@
+{
+  "type": "native4dgs-runtime-v1",
+  "backend": "baked_keyframes_int16",
+  "gaussianCount": 91800,
+  "frameCount": 32,
+  "fps": 5.333333333333333,
+  "loop": true,
+  "speed": 1.0,
+  "displacementScale": 1.0,
+  "motionPath": "motion_baked_i16.bin",
+  "quantScale": [
+    0.0001035749155562371,
+    0.00011777214240282774,
+    5.0220838602399454e-05
+  ]
+}
