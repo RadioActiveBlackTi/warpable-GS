@@ -395,18 +395,16 @@ async function initHoloPortal() {
         scene: "underwater",
 
         rotation: {
-          x: Math.PI / 2,
+          x: 0,
 
           y: 0,
 
-          z: THREE.MathUtils.degToRad(160),
+          z: 0,
         },
 
         position: {
-          x: 0,
-
-          y: PORTAL.CYLINDER_HEIGHT + 18,
-
+          x: -100,
+          y: -25,
           z: 0,
         },
 
