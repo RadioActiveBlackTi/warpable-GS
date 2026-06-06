@@ -6,6 +6,10 @@ import { CAMERA, PORTAL } from "./constants.js";
 async function initHoloPortal() {
   const app = document.getElementById("app");
 
+  const ARONA_INITIAL_MODEL_SCALE = 0.75;
+
+  const ARONA_INITIAL_PITCH = THREE.MathUtils.degToRad(-99);
+
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
     alpha: false,
@@ -157,11 +161,17 @@ async function initHoloPortal() {
   syncEgoAnglesFromOrbit();
 
   cameraModeToggle?.addEventListener("change", () => {
+    if (cameraPathState.isPlaying) {
+      cameraModeToggle.checked = cameraMode === "ego";
+
+      return;
+    }
+
     setCameraMode(cameraModeToggle.checked ? "ego" : "orbit");
   });
 
   window.addEventListener("mousedown", (event) => {
-    if (cameraMode !== "ego" || event.button !== 0) {
+    if (cameraPathState.isPlaying || cameraMode !== "ego" || event.button !== 0) {
       return;
     }
 
@@ -181,7 +191,7 @@ async function initHoloPortal() {
   });
 
   window.addEventListener("mousemove", (event) => {
-    if (cameraMode !== "ego" || !egoDrag.active) {
+    if (cameraPathState.isPlaying || cameraMode !== "ego" || !egoDrag.active) {
       return;
     }
 
@@ -214,8 +224,344 @@ async function initHoloPortal() {
     shift: false,
   };
 
+  const cameraPathState = {
+    keyframes: [],
+    isPlaying: false,
+    elapsed: 0,
+    duration: 0,
+    curve: null,
+  };
+
+  const cameraPathImportPath = asset(
+    "camera-path-2026-06-06T08-41-40.384Z.json",
+  );
+
+  const cameraPathForward = new THREE.Vector3();
+
+  const cameraPathPosition = new THREE.Vector3();
+
+  const cameraPathQuaternion = new THREE.Quaternion();
+
+  const cameraPathHud = document.createElement("div");
+
+  cameraPathHud.style.cssText = [
+    "position:fixed",
+    "left:16px",
+    "bottom:16px",
+    "z-index:20",
+    "padding:10px 12px",
+    "border-radius:10px",
+    "background:rgba(0,0,0,0.55)",
+    "color:#fff",
+    "font:13px/1.4 system-ui,sans-serif",
+    "backdrop-filter:blur(8px)",
+    "box-shadow:0 10px 30px rgba(0,0,0,0.25)",
+    "pointer-events:none",
+    "max-width:260px",
+  ].join(";");
+
+  const cameraPathHudTitle = document.createElement("div");
+
+  cameraPathHudTitle.textContent = "Camera path";
+
+  cameraPathHudTitle.style.cssText = [
+    "font-weight:700",
+    "margin-bottom:4px",
+  ].join(";");
+
+  const cameraPathHudHint = document.createElement("div");
+
+  cameraPathHudHint.textContent = "M: 저장 · O: 다운로드 · I: 불러오기 · V: 재생/정지";
+
+  const cameraPathHudInfo = document.createElement("div");
+
+  const cameraPathHudState = document.createElement("div");
+
+  cameraPathHudState.style.cssText = ["margin-top:4px", "opacity:0.9"].join(
+    ";",
+  );
+
+  cameraPathHud.append(
+    cameraPathHudTitle,
+    cameraPathHudHint,
+    cameraPathHudInfo,
+    cameraPathHudState,
+  );
+
+  document.body.appendChild(cameraPathHud);
+
+  const updateCameraPathHud = (stateMessage = "대기 중") => {
+    cameraPathHudInfo.textContent = `저장된 포즈: ${cameraPathState.keyframes.length}개`;
+    cameraPathHudState.textContent = cameraPathState.isPlaying
+      ? `상태: 재생 중${cameraPathState.duration > 0 ? ` (${Math.min(cameraPathState.elapsed, cameraPathState.duration).toFixed(1)}s / ${cameraPathState.duration.toFixed(1)}s)` : ""}`
+      : `상태: ${stateMessage}`;
+  };
+
+  const syncControlsTargetFromCamera = () => {
+    mainCamera.getWorldDirection(cameraPathForward);
+
+    controls.target.copy(mainCamera.position).add(cameraPathForward);
+  };
+
+  const captureCurrentCameraPose = () => {
+    cameraPathState.keyframes.push({
+      position: mainCamera.position.clone(),
+      quaternion: mainCamera.quaternion.clone(),
+    });
+
+    updateCameraPathHud("포즈 저장됨");
+  };
+
+  const serializeCameraPath = () => ({
+    version: 1,
+    intervalSeconds: 1,
+    keyframes: cameraPathState.keyframes.map((keyframe, index) => ({
+      index,
+      position: keyframe.position.toArray(),
+      quaternion: keyframe.quaternion.toArray(),
+    })),
+  });
+
+  const downloadCameraPath = () => {
+    if (cameraPathState.keyframes.length === 0) {
+      updateCameraPathHud("저장할 포즈가 없습니다");
+
+      return;
+    }
+
+    const payload = JSON.stringify(serializeCameraPath(), null, 2);
+
+    const blob = new Blob([payload], { type: "application/json" });
+
+    const url = URL.createObjectURL(blob);
+
+    const anchor = document.createElement("a");
+
+    anchor.href = url;
+    anchor.download = `camera-path-${new Date().toISOString().replaceAll(":", "-")}.json`;
+
+    document.body.appendChild(anchor);
+
+    anchor.click();
+
+    anchor.remove();
+
+    URL.revokeObjectURL(url);
+
+    updateCameraPathHud("포즈 다운로드됨");
+  };
+
+  const readCameraPathPayload = (payload) => {
+    const keyframes = Array.isArray(payload?.keyframes) ? payload.keyframes : [];
+
+    return keyframes
+      .map((entry) => {
+        const positionArray = entry?.position;
+        const quaternionArray = entry?.quaternion;
+
+        if (!Array.isArray(positionArray) || positionArray.length < 3) {
+          return null;
+        }
+
+        if (!Array.isArray(quaternionArray) || quaternionArray.length < 4) {
+          return null;
+        }
+
+        return {
+          position: new THREE.Vector3(
+            Number(positionArray[0]),
+            Number(positionArray[1]),
+            Number(positionArray[2]),
+          ),
+          quaternion: new THREE.Quaternion(
+            Number(quaternionArray[0]),
+            Number(quaternionArray[1]),
+            Number(quaternionArray[2]),
+            Number(quaternionArray[3]),
+          ),
+        };
+      })
+      .filter(Boolean);
+  };
+
+  const loadCameraPathFromPlaceholder = async () => {
+    if (cameraPathState.isPlaying) {
+      stopCameraPathPlayback("정지됨");
+    }
+
+    try {
+      const response = await fetch(cameraPathImportPath);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const payload = await response.json();
+
+      const keyframes = readCameraPathPayload(payload);
+
+      if (keyframes.length === 0) {
+        updateCameraPathHud("유효한 포즈가 없습니다");
+
+        return false;
+      }
+
+      cameraPathState.keyframes = keyframes;
+      cameraPathState.isPlaying = false;
+      cameraPathState.elapsed = 0;
+      cameraPathState.duration = 0;
+      cameraPathState.curve = null;
+
+      updateCameraPathHud("포즈 불러옴");
+
+      return true;
+    } catch (error) {
+      console.error("카메라 포즈 불러오기 실패:", error);
+      updateCameraPathHud("포즈 불러오기 실패");
+
+      return false;
+    }
+  };
+
+  const stopCameraPathPlayback = (stateMessage = "정지됨") => {
+    if (!cameraPathState.isPlaying) {
+      updateCameraPathHud(stateMessage);
+
+      return;
+    }
+
+    cameraPathState.isPlaying = false;
+    cameraPathState.elapsed = 0;
+    cameraPathState.duration = 0;
+    cameraPathState.curve = null;
+
+    setCameraMode(cameraMode);
+
+    updateCameraPathHud(stateMessage);
+  };
+
+  const applyCameraPathPose = (position, quaternion) => {
+    mainCamera.position.copy(position);
+    mainCamera.quaternion.copy(quaternion);
+    mainCamera.updateMatrixWorld(true);
+
+    syncControlsTargetFromCamera();
+  };
+
+  const startCameraPathPlayback = () => {
+    if (cameraPathState.keyframes.length < 2) {
+      updateCameraPathHud("포즈를 2개 이상 저장하세요");
+
+      return;
+    }
+
+    cameraPathState.curve = new THREE.CatmullRomCurve3(
+      cameraPathState.keyframes.map((keyframe) => keyframe.position.clone()),
+      false,
+      "centripetal",
+      0.5,
+    );
+
+    cameraPathState.isPlaying = true;
+    cameraPathState.elapsed = 0;
+    cameraPathState.duration = cameraPathState.keyframes.length - 1;
+
+    egoDrag.active = false;
+
+    renderer.domElement.style.cursor = "default";
+
+    controls.enabled = false;
+    controls.enableZoom = false;
+    controls.enableRotate = false;
+    controls.enablePan = false;
+
+    updateCameraPathHud("재생 시작");
+  };
+
+  const updateCameraPathPlayback = (deltaTime) => {
+    if (!cameraPathState.isPlaying || !cameraPathState.curve) {
+      return;
+    }
+
+    cameraPathState.elapsed += deltaTime;
+
+    const totalDuration = cameraPathState.duration;
+
+    const progress = Math.min(cameraPathState.elapsed, totalDuration);
+
+    const curveT = totalDuration > 0 ? progress / totalDuration : 0;
+
+    cameraPathState.curve.getPoint(curveT, cameraPathPosition);
+
+    const segmentCount = cameraPathState.keyframes.length - 1;
+
+    const segmentIndex = Math.min(Math.floor(progress), segmentCount - 1);
+
+    const localT = progress - segmentIndex;
+
+    const startQuaternion = cameraPathState.keyframes[segmentIndex].quaternion;
+
+    const endQuaternion = cameraPathState.keyframes[segmentIndex + 1].quaternion;
+
+    cameraPathQuaternion.copy(startQuaternion).slerp(endQuaternion, localT);
+
+    applyCameraPathPose(cameraPathPosition, cameraPathQuaternion);
+
+    if (cameraPathState.elapsed >= totalDuration) {
+      stopCameraPathPlayback("재생 완료");
+    } else {
+      updateCameraPathHud("재생 중");
+    }
+  };
+
+  const autoLoadAndPlayCameraPath = async () => {
+    const loaded = await loadCameraPathFromPlaceholder();
+
+    if (loaded) {
+      startCameraPathPlayback();
+    }
+  };
+
+  updateCameraPathHud();
+
   window.addEventListener("keydown", (event) => {
     const key = event.key.toLowerCase();
+
+    if (key === "m") {
+      if (!event.repeat) {
+        captureCurrentCameraPose();
+      }
+
+      return;
+    }
+
+    if (key === "v") {
+      if (!event.repeat) {
+        if (cameraPathState.isPlaying) {
+          stopCameraPathPlayback("정지됨");
+        } else {
+          startCameraPathPlayback();
+        }
+      }
+
+      return;
+    }
+
+    if (key === "o") {
+      if (!event.repeat) {
+        downloadCameraPath();
+      }
+
+      return;
+    }
+
+    if (key === "i") {
+      if (!event.repeat) {
+        void loadCameraPathFromPlaceholder();
+      }
+
+      return;
+    }
 
     if (key in keyState) {
       keyState[key] = true;
@@ -343,7 +689,7 @@ async function initHoloPortal() {
         scene: "underwater",
 
         rotation: {
-          x: 0,
+          x: ARONA_INITIAL_PITCH,
           y: 0,
           z: 0,
         },
@@ -354,7 +700,7 @@ async function initHoloPortal() {
           z: 0,
         },
 
-        scale: 2.0,
+        scale: ARONA_INITIAL_MODEL_SCALE,
       },
 
       {
@@ -670,8 +1016,9 @@ async function initHoloPortal() {
       }
     : null;
 
+
   const aronaPathState = {
-    enabled: false,
+    enabled: true,
 
     phase: Math.atan2(initialOffsetZ, initialOffsetX),
 
@@ -685,7 +1032,7 @@ async function initHoloPortal() {
 
     followPathDirection: false,
 
-    pitch: aronaViewer?.rotation.x ?? 0,
+    pitch: aronaViewer?.rotation.x ?? ARONA_INITIAL_PITCH,
 
     yawOffset: aronaViewer?.rotation.y ?? 0,
 
@@ -707,6 +1054,12 @@ async function initHoloPortal() {
   const aronaPathOffsetQuaternion = new THREE.Quaternion();
 
   const aronaPathOffsetEuler = new THREE.Euler(0, 0, 0, "YXZ");
+
+  if (aronaViewer) {
+    aronaViewer.scale.setScalar(ARONA_INITIAL_MODEL_SCALE * PORTAL.SPLAT_SCALE);
+    aronaViewer.rotation.x = ARONA_INITIAL_PITCH;
+    aronaViewer.updateMatrixWorld(true);
+  }
 
   const updateAronaTrajectory = (deltaTime) => {
     if (!aronaViewer || !moonViewer || !aronaPathState.enabled) {
@@ -1796,7 +2149,9 @@ async function initHoloPortal() {
 
     const deltaTime = timer.getDelta();
 
-    if (cameraMode === "ego") {
+    if (cameraPathState.isPlaying) {
+      updateCameraPathPlayback(deltaTime);
+    } else if (cameraMode === "ego") {
       moveEgoCamera(deltaTime);
     } else {
       controls.update();
@@ -1810,6 +2165,8 @@ async function initHoloPortal() {
   };
 
   setCameraMode(cameraMode);
+
+  void autoLoadAndPlayCameraPath();
 
   requestAnimationFrame(animate);
 }
